@@ -1,62 +1,65 @@
-use std::borrow::BorrowMut;
-use std::cell::RefCell;
-use std::fmt::{Debug, Formatter};
-use std::ops::Deref;
-use std::ptr::NonNull;
-use std::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, AtomicUsize, Ordering};
-use bumpalo::{Bump};
+use bumpalo::{boxed::Box, collections::Vec, vec, Bump};
 use rand::prelude::StdRng;
 use rand::{RngCore, SeedableRng};
-
 
 const MAX_HEIGHT: usize = 12;
 const BRANCHING_FACTOR: u32 = 4;
 
 #[derive(Clone)]
-struct SkipListNode {
-    key: Vec<u8>,
-    value: Vec<u8>,
-    next: Vec<Option<*mut SkipListNode>>,
+struct SkipListNode<'a> {
+    key: &'a [u8],
+    value: &'a [u8],
+    skips: Vec<'a, Option<*mut SkipListNode<'a>>>,
 }
 
-impl SkipListNode {
-    fn next(&self, n: usize) -> Option<*mut SkipListNode> {
-        self.next[n].clone()
+impl<'a> SkipListNode<'a> {
+    fn next(&self, n: usize) -> Option<*mut SkipListNode<'a>> {
+        self.skips[n]
     }
 
-    fn set_next(&mut self, n: usize, node: Option<*mut SkipListNode>) {
-        self.next[n] = node
+    fn set_next(&mut self, n: usize, node: Option<*mut SkipListNode<'a>>) {
+        self.skips[n] = node
     }
 }
 
-pub struct SkipList {
-    arena : Bump,
-    head: Box<SkipListNode>,
+pub struct SkipList<'a> {
+    arena: &'a Bump,
+    head: Box<'a, SkipListNode<'a>>,
     rand: StdRng,
     maxheight: usize,
+    approx_mem: usize,
 }
 
-impl SkipList {
-    pub fn new() -> SkipList {
-        let arena =  Bump::new();
-        let head = Box::new(SkipListNode {
-            key: vec![],
-            value: vec![],
-            next: vec![None; MAX_HEIGHT],
-        });
+impl<'a> SkipList<'a> {
+    pub fn new(arena: &'a Bump) -> SkipList<'a> {
+        let head = Box::new_in(
+            SkipListNode {
+                key: arena.alloc_slice_copy(&[]),
+                value: arena.alloc_slice_copy(&[]),
+                skips: vec![in arena; None; MAX_HEIGHT],
+            },
+            arena,
+        );
         SkipList {
             arena,
             head,
             rand: StdRng::seed_from_u64(0xdeadbeef),
             maxheight: 1,
+            approx_mem: (2 * std::mem::size_of::<usize>())
+                + std::mem::size_of::<std::boxed::Box<SkipListNode>>()
+                + std::mem::size_of::<StdRng>()
+                + MAX_HEIGHT * std::mem::size_of::<Option<*mut SkipListNode>>(),
         }
     }
 
-    fn new_node(&self, height: usize, key: Vec<u8>, value: Vec<u8>) -> *mut SkipListNode {
+    fn new_node(&mut self, height: usize, key: &[u8], value: &[u8]) -> *mut SkipListNode<'a> {
+        let key = self.arena.alloc_slice_copy(key);
+        let value = self.arena.alloc_slice_copy(value);
+
         self.arena.alloc(SkipListNode {
             key,
             value,
-            next: vec![None; height],
+            skips: vec![in self.arena; None; height],
         })
     }
 
@@ -72,12 +75,18 @@ impl SkipList {
 
     fn key_is_after_node(&self, key: &[u8], node: Option<*mut SkipListNode>) -> bool {
         if let Some(node) = node {
-            unsafe { return (*node).key.as_slice() < key; }
+            unsafe {
+                return (*node).key < key;
+            }
         }
-        return false
+        false
     }
 
-    fn find_greater_or_equal(&mut self, key: &[u8], mut prevs: Option<&mut Vec<Option<*mut SkipListNode>>>) -> Option<*mut SkipListNode> {
+    fn find_greater_or_equal(
+        &mut self,
+        key: &[u8],
+        mut prevs: Option<&mut std::vec::Vec<Option<*mut SkipListNode<'a>>>>,
+    ) -> Option<*mut SkipListNode<'a>> {
         let mut current = self.head.as_mut() as *mut SkipListNode;
         let mut level = self.maxheight - 1;
         unsafe {
@@ -90,7 +99,7 @@ impl SkipList {
                         prevs[level] = Some(current);
                     }
                     if level == 0 {
-                        return next
+                        return next;
                     } else {
                         level -= 1;
                     }
@@ -99,31 +108,39 @@ impl SkipList {
         }
     }
 
-    pub fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) {
-        let mut prevs = vec![None; MAX_HEIGHT];
-        let mut current = self.find_greater_or_equal(&key, Some(&mut prevs));
+    pub fn insert(&mut self, key: &[u8], value: &[u8]) {
+        assert!(!key.is_empty());
+        let mut prevs = std::vec![None; MAX_HEIGHT];
+        let current = self.find_greater_or_equal(key, Some(&mut prevs));
         if let Some(current) = current {
-            unsafe { assert!((*current).key.ne(&key)) }
+            unsafe { assert!((*current).key.ne(key)) }
         }
         let height = self.random_height();
-        if height > self.maxheight {
-            for i in self.maxheight..height {
-                prevs[i] = Some(self.head.as_mut())
+        let current_height = self.maxheight;
+        if height > current_height {
+            for prev in prevs.iter_mut().take(height).skip(current_height) {
+                *prev = Some(self.head.as_mut())
             }
             self.maxheight = height;
         }
-        let mut current =  self.new_node(height, key, value);
-        for i in 0..height{
+        let current = self.new_node(height, key, value);
+        for (i, prev) in prevs.iter().flatten().enumerate() {
             unsafe {
-                if let Some(prev) = prevs[i] {
-                    (*current).set_next(i, (*prev).next(i));
-                    (*prev).set_next(i, Some(current));
-                }
+                (*current).set_next(i, (*(*prev)).next(i));
+                (*(*prev)).set_next(i, Some(current));
             }
+        }
+
+        unsafe {
+            let added_mem = std::mem::size_of::<SkipListNode>()
+                + std::mem::size_of::<Option<*mut SkipListNode>>() * (*current).skips.len()
+                + (*current).key.len()
+                + (*current).value.len();
+            self.approx_mem += added_mem;
         }
     }
 
-    pub  fn dbg_print(&self) {
+    pub fn dbg_print(&self) {
         unsafe {
             let mut current = self.head.as_ref() as *const SkipListNode;
             loop {
@@ -132,30 +149,33 @@ impl SkipList {
                     current,
                     (*current).key,
                     (*current).value,
-                    (*current).next
+                    (*current).skips
                 );
                 let next = (*current).next(0);
-                if let Some(next) = next{
+                if let Some(next) = next {
                     current = next;
-                }else {
-                    break
+                } else {
+                    break;
                 }
-
             }
+
+            println!("approx mem {}", self.approx_mem);
+            println!("arena mem {}", self.arena.allocated_bytes())
         }
     }
-
 }
 
 #[cfg(test)]
 mod tests {
     use crate::skiplist::SkipList;
+    use bumpalo::Bump;
 
     #[test]
     fn randoms() {
-        let mut list = SkipList::new();
+        let arena = Bump::new();
+        let mut list = SkipList::new(&arena);
         for i in 0..100 {
-           println!("{}",  list.random_height())
+            println!("{}", list.random_height())
         }
     }
 }

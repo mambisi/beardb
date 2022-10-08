@@ -1,3 +1,5 @@
+extern crate core;
+
 mod skiplist;
 
 pub fn add(left: usize, right: usize) -> usize {

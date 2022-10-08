@@ -1,11 +1,11 @@
 use bumpalo::{boxed::Box, collections::Vec, vec, Bump};
 use rand::prelude::StdRng;
 use rand::{RngCore, SeedableRng};
+use std::marker::PhantomData;
 
 const MAX_HEIGHT: usize = 12;
 const BRANCHING_FACTOR: u32 = 4;
 
-#[derive(Clone)]
 struct SkipListNode<'a> {
     key: &'a [u8],
     value: &'a [u8],
@@ -26,8 +26,9 @@ pub struct SkipList<'a> {
     arena: &'a Bump,
     head: Box<'a, SkipListNode<'a>>,
     rand: StdRng,
-    maxheight: usize,
+    max_height: usize,
     approx_mem: usize,
+    len: usize,
 }
 
 impl<'a> SkipList<'a> {
@@ -44,11 +45,12 @@ impl<'a> SkipList<'a> {
             arena,
             head,
             rand: StdRng::seed_from_u64(0xdeadbeef),
-            maxheight: 1,
-            approx_mem: (2 * std::mem::size_of::<usize>())
+            max_height: 1,
+            approx_mem: (3 * std::mem::size_of::<usize>())
                 + std::mem::size_of::<std::boxed::Box<SkipListNode>>()
                 + std::mem::size_of::<StdRng>()
                 + MAX_HEIGHT * std::mem::size_of::<Option<*mut SkipListNode>>(),
+            len: 0,
         }
     }
 
@@ -88,7 +90,7 @@ impl<'a> SkipList<'a> {
         mut prevs: Option<&mut std::vec::Vec<Option<*mut SkipListNode<'a>>>>,
     ) -> Option<*mut SkipListNode<'a>> {
         let mut current = self.head.as_mut() as *mut SkipListNode;
-        let mut level = self.maxheight - 1;
+        let mut level = self.max_height - 1;
         unsafe {
             loop {
                 let next = (*current).next(level);
@@ -116,18 +118,19 @@ impl<'a> SkipList<'a> {
             unsafe { assert!((*current).key.ne(key)) }
         }
         let height = self.random_height();
-        let current_height = self.maxheight;
+        let current_height = self.max_height;
         if height > current_height {
             for prev in prevs.iter_mut().take(height).skip(current_height) {
                 *prev = Some(self.head.as_mut())
             }
-            self.maxheight = height;
+            self.max_height = height;
         }
         let current = self.new_node(height, key, value);
-        for (i, prev) in prevs.iter().flatten().enumerate() {
+
+        for (i, prev) in prevs.iter().flatten().enumerate().take(height) {
             unsafe {
-                (*current).set_next(i, (*(*prev)).next(i));
-                (*(*prev)).set_next(i, Some(current));
+                (*current).set_next(i, (**prev).next(i));
+                (**prev).set_next(i, Some(current));
             }
         }
 
@@ -138,6 +141,8 @@ impl<'a> SkipList<'a> {
                 + (*current).value.len();
             self.approx_mem += added_mem;
         }
+
+        self.len += 1;
     }
 
     pub fn dbg_print(&self) {
@@ -158,10 +163,11 @@ impl<'a> SkipList<'a> {
                     break;
                 }
             }
-
-            println!("approx mem {}", self.approx_mem);
-            println!("arena mem {}", self.arena.allocated_bytes())
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
     }
 }
 
@@ -169,13 +175,35 @@ impl<'a> SkipList<'a> {
 mod tests {
     use crate::skiplist::SkipList;
     use bumpalo::Bump;
+    pub fn make_skipmap(arena: &Bump) -> SkipList {
+        let mut skm = SkipList::new(arena);
+        let keys = vec![
+            "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
+            "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",
+            "aby", "abz",
+        ];
+
+        for k in keys {
+            skm.insert(k.as_bytes(), "def".as_bytes());
+        }
+        skm
+    }
 
     #[test]
-    fn randoms() {
+    fn test_insert() {
         let arena = Bump::new();
-        let mut list = SkipList::new(&arena);
-        for i in 0..100 {
-            println!("{}", list.random_height())
-        }
+        let skm = make_skipmap(&arena);
+        assert_eq!(skm.len(), 26);
+        skm.dbg_print();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_no_dupes() {
+        let arena = Bump::new();
+        let mut skm = make_skipmap(&arena);
+        // this should panic
+        skm.insert("abc".as_bytes(), "def".as_bytes());
+        skm.insert("abf".as_bytes(), "def".as_bytes());
     }
 }

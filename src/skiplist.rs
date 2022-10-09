@@ -1,3 +1,4 @@
+use crate::error::Error;
 use crate::iter::Iter;
 use bumpalo::{boxed::Box, collections::Vec, vec, Bump};
 use rand::prelude::StdRng;
@@ -6,7 +7,6 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
-use crate::error::Error;
 
 const MAX_HEIGHT: usize = 12;
 const BRANCHING_FACTOR: u32 = 4;
@@ -217,15 +217,15 @@ impl<'a> InnerSkipMap<'a> {
         }
     }
 
-    fn insert(&mut self, key: &[u8], value: &[u8]) -> crate::Result<()>{
+    fn insert(&mut self, key: &[u8], value: &[u8]) -> crate::Result<()> {
         let mut prevs = std::vec![None; MAX_HEIGHT];
         let mut current = self.head.as_mut() as *mut Node;
         let mut level = self.max_height - 1;
         loop {
             unsafe {
                 if let Some(next) = (*current).next(level) {
-                    if (*next).key.eq(key){
-                        return Err(Error::DuplicateEntry)
+                    if (*next).key.eq(key) {
+                        return Err(Error::DuplicateEntry);
                     }
                     if (*next).key.lt(key) {
                         current = next;
@@ -313,7 +313,7 @@ struct SkipMapIterator<'a> {
 
 impl<'a> SkipMapIterator<'a> {
     fn is_valid(&self) -> crate::Result<()> {
-        if !self.node.is_null() {
+        if self.node.is_null() {
             return Err(Error::InvalidIterator);
         }
         Ok(())
@@ -351,7 +351,7 @@ impl<'a> Iter for SkipMapIterator<'a> {
 
     fn current(&self) -> crate::Result<Option<Self::Item>> {
         self.is_valid()?;
-        unsafe { Ok(Some(((*self.node).key, (*self.node).key))) }
+        unsafe { Ok(Some(((*self.node).key, (*self.node).value))) }
     }
 
     fn seek(&mut self, target: &[u8]) {
@@ -378,11 +378,27 @@ impl<'a> Iter for SkipMapIterator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::skiplist::InnerSkipMap;
+    use crate::iter::Iter;
+    use crate::skiplist::{InnerSkipMap, SkipMap, SkipMapIterator};
+    use crate::Error::Unknown;
     use bumpalo::Bump;
 
     pub fn make_skipmap(arena: &Bump) -> InnerSkipMap {
         let mut skm = InnerSkipMap::new(arena);
+        let keys = vec![
+            "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
+            "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",
+            "aby", "abz",
+        ];
+
+        for k in keys {
+            skm.insert(k.as_bytes(), "def".as_bytes()).unwrap();
+        }
+        skm
+    }
+
+    pub fn make_skipmap_t(arena: &Bump) -> SkipMap {
+        let mut skm = SkipMap::new(arena);
         let keys = vec![
             "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
             "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",
@@ -458,5 +474,45 @@ mod tests {
         assert!(!skm.contains("123".as_bytes()));
         assert!(!skm.contains("aaa".as_bytes()));
         assert!(!skm.contains("456".as_bytes()));
+    }
+
+    #[test]
+    fn test_skipmap_iterator_seek_valid() {
+        let arena = Bump::new();
+        let skm = make_skipmap_t(&arena);
+        let mut iter = skm.iter();
+        assert!(iter.next().is_ok());
+        assert!(iter.valid());
+        assert_eq!(current_key_val(&iter).unwrap().0, "aba".as_bytes());
+        iter.seek(&"abz".as_bytes());
+        assert_eq!(
+            current_key_val(&iter).unwrap(),
+            ("abz".as_bytes(), "def".as_bytes())
+        );
+        // go back to beginning
+        iter.seek(&"aba".as_bytes());
+        assert_eq!(
+            current_key_val(&iter).unwrap(),
+            ("aba".as_bytes(), "def".as_bytes())
+        );
+
+        iter.seek(&"".as_bytes());
+        assert!(iter.valid());
+        assert!(iter.prev().is_ok());
+        assert!(!iter.valid());
+
+        while let Ok(t) = iter.next() {}
+        assert!(!iter.valid());
+        assert!(iter.prev().is_err());
+        assert_eq!(current_key_val(&iter), None);
+    }
+
+    fn current_key_val<'a>(
+        iter: &'a Box<dyn 'a + Iter<Item = (&[u8], &[u8])>>,
+    ) -> Option<(&'a [u8], &'a [u8])> {
+        return match iter.current() {
+            Ok(Some(t)) => Some(t),
+            _ => None,
+        };
     }
 }

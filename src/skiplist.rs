@@ -115,8 +115,6 @@ impl<'a> InnerSkipList<'a> {
         while height < MAX_HEIGHT && self.rand.next_u32() % BRANCHING_FACTOR == 0 {
             height += 1;
         }
-        assert!(height > 0);
-        assert!(height <= MAX_HEIGHT);
         height
     }
 

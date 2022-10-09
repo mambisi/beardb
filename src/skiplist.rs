@@ -14,7 +14,6 @@ const BRANCHING_FACTOR: u32 = 4;
 #[derive(Debug)]
 struct Node<'a> {
     key: &'a [u8],
-    value: &'a [u8],
     skips: Vec<'a, Option<*mut Node<'a>>>,
 }
 
@@ -28,7 +27,7 @@ impl<'a> Node<'a> {
     }
 }
 
-pub struct InnerSkipMap<'a> {
+pub struct InnerSkipList<'a> {
     arena: &'a Bump,
     head: Box<'a, Node<'a>>,
     rand: StdRng,
@@ -36,7 +35,7 @@ pub struct InnerSkipMap<'a> {
     len: usize,
 }
 
-impl<'a> Debug for InnerSkipMap<'a> {
+impl<'a> Debug for InnerSkipList<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut list = f.debug_map();
 
@@ -56,7 +55,7 @@ impl<'a> Debug for InnerSkipMap<'a> {
     }
 }
 
-impl<'a> Display for InnerSkipMap<'a> {
+impl<'a> Display for InnerSkipList<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         use std::fmt::Write;
         let mut w = String::new();
@@ -68,10 +67,9 @@ impl<'a> Display for InnerSkipMap<'a> {
                     current = next;
                     writeln!(
                         &mut w,
-                        "{:?} {:?}/{:?} - {:?}",
+                        "{:?} {:?} - {:?}",
                         current,
                         (*current).key,
-                        (*current).value,
                         (*current).skips
                     )?;
                 } else {
@@ -83,17 +81,16 @@ impl<'a> Display for InnerSkipMap<'a> {
     }
 }
 
-impl<'a> InnerSkipMap<'a> {
-    pub fn new(arena: &'a Bump) -> InnerSkipMap<'a> {
+impl<'a> InnerSkipList<'a> {
+    pub fn new(arena: &'a Bump) -> InnerSkipList<'a> {
         let head = Box::new_in(
             Node {
                 key: arena.alloc_slice_copy(&[]),
-                value: arena.alloc_slice_copy(&[]),
                 skips: vec![in arena; None; MAX_HEIGHT],
             },
             arena,
         );
-        InnerSkipMap {
+        InnerSkipList {
             arena,
             head,
             rand: StdRng::seed_from_u64(0xdeadbeef),
@@ -102,13 +99,10 @@ impl<'a> InnerSkipMap<'a> {
         }
     }
 
-    fn new_node(&mut self, height: usize, key: &[u8], value: &[u8]) -> *mut Node<'a> {
+    fn new_node(&mut self, height: usize, key: &[u8]) -> *mut Node<'a> {
         let key = self.arena.alloc_slice_copy(key);
-        let value = self.arena.alloc_slice_copy(value);
-
         self.arena.alloc(Node {
             key,
-            value,
             skips: vec![in self.arena; None; height],
         })
     }
@@ -217,7 +211,7 @@ impl<'a> InnerSkipMap<'a> {
         }
     }
 
-    fn insert(&mut self, key: &[u8], value: &[u8]) -> crate::Result<()> {
+    fn insert(&mut self, key: &[u8]) -> crate::Result<()> {
         let mut prevs = std::vec![None; MAX_HEIGHT];
         let mut current = self.head.as_mut() as *mut Node;
         let mut level = self.max_height - 1;
@@ -245,14 +239,14 @@ impl<'a> InnerSkipMap<'a> {
         let current_height = self.max_height;
         prevs.resize(height, None);
         if height > current_height {
-            for prev in prevs.iter_mut().take(height).skip(current_height) {
+            for prev in prevs.iter_mut().skip(current_height) {
                 *prev = Some(self.head.as_mut())
             }
             self.max_height = height;
         }
 
-        current = self.new_node(height, key, value);
-        for (i, prev) in prevs.iter().flatten().enumerate().take(height) {
+        current = self.new_node(height, key);
+        for (i, prev) in prevs.iter().flatten().enumerate() {
             unsafe {
                 (*current).set_next(i, (**prev).next(i));
                 (**prev).set_next(i, Some(current));
@@ -275,19 +269,19 @@ impl<'a> InnerSkipMap<'a> {
     }
 }
 
-pub struct SkipMap<'a> {
-    inner: Rc<RefCell<InnerSkipMap<'a>>>,
+pub struct SkipList<'a> {
+    inner: Rc<RefCell<InnerSkipList<'a>>>,
 }
 
-impl<'a> SkipMap<'a> {
+impl<'a> SkipList<'a> {
     pub fn new(arena: &'a Bump) -> Self {
         Self {
-            inner: Rc::new(RefCell::new(InnerSkipMap::new(arena))),
+            inner: Rc::new(RefCell::new(InnerSkipList::new(arena))),
         }
     }
 
-    fn insert(&mut self, key: &[u8], value: &[u8]) -> crate::Result<()> {
-        self.inner.borrow_mut().insert(key, value)
+    fn insert(&mut self, key: &[u8]) -> crate::Result<()> {
+        self.inner.borrow_mut().insert(key)
     }
 
     fn contains(&self, key: &[u8]) -> bool {
@@ -298,7 +292,7 @@ impl<'a> SkipMap<'a> {
         self.inner.borrow().len()
     }
 
-    fn iter(&self) -> std::boxed::Box<dyn 'a + Iter<Item = (&'a [u8], &'a [u8])>> {
+    fn iter(&self) -> std::boxed::Box<dyn 'a + Iter<Item = &'a [u8]>> {
         std::boxed::Box::new(SkipMapIterator {
             map: self.inner.clone(),
             node: self.inner.borrow().head.as_ref() as *const Node,
@@ -307,7 +301,7 @@ impl<'a> SkipMap<'a> {
 }
 
 struct SkipMapIterator<'a> {
-    map: Rc<RefCell<InnerSkipMap<'a>>>,
+    map: Rc<RefCell<InnerSkipList<'a>>>,
     node: *const Node<'a>,
 }
 
@@ -321,7 +315,7 @@ impl<'a> SkipMapIterator<'a> {
 }
 
 impl<'a> Iter for SkipMapIterator<'a> {
-    type Item = (&'a [u8], &'a [u8]);
+    type Item = &'a [u8];
 
     fn valid(&self) -> bool {
         self.is_valid().is_ok()
@@ -351,7 +345,7 @@ impl<'a> Iter for SkipMapIterator<'a> {
 
     fn current(&self) -> crate::Result<Option<Self::Item>> {
         self.is_valid()?;
-        unsafe { Ok(Some(((*self.node).key, (*self.node).value))) }
+        unsafe { Ok(Some((*self.node).key)) }
     }
 
     fn seek(&mut self, target: &[u8]) {
@@ -379,12 +373,12 @@ impl<'a> Iter for SkipMapIterator<'a> {
 #[cfg(test)]
 mod tests {
     use crate::iter::Iter;
-    use crate::skiplist::{InnerSkipMap, SkipMap, SkipMapIterator};
+    use crate::skiplist::{InnerSkipList, SkipList, SkipMapIterator};
     use crate::Error::Unknown;
     use bumpalo::Bump;
 
-    pub fn make_skipmap(arena: &Bump) -> InnerSkipMap {
-        let mut skm = InnerSkipMap::new(arena);
+    pub fn make_skipmap(arena: &Bump) -> InnerSkipList {
+        let mut skm = InnerSkipList::new(arena);
         let keys = vec![
             "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
             "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",
@@ -392,13 +386,13 @@ mod tests {
         ];
 
         for k in keys {
-            skm.insert(k.as_bytes(), "def".as_bytes()).unwrap();
+            skm.insert(k.as_bytes()).unwrap();
         }
         skm
     }
 
-    pub fn make_skipmap_t(arena: &Bump) -> SkipMap {
-        let mut skm = SkipMap::new(arena);
+    pub fn make_skipmap_t(arena: &Bump) -> SkipList {
+        let mut skm = SkipList::new(arena);
         let keys = vec![
             "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
             "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",
@@ -406,7 +400,7 @@ mod tests {
         ];
 
         for k in keys {
-            skm.insert(k.as_bytes(), "def".as_bytes()).unwrap();
+            skm.insert(k.as_bytes()).unwrap();
         }
         skm
     }
@@ -423,8 +417,8 @@ mod tests {
     fn test_no_dupes() {
         let arena = Bump::new();
         let mut skm = make_skipmap(&arena);
-        assert!(skm.insert("abc".as_bytes(), "def".as_bytes()).is_err());
-        assert!(skm.insert("abf".as_bytes(), "def".as_bytes()).is_err());
+        assert!(skm.insert("abc".as_bytes()).is_err());
+        assert!(skm.insert("abf".as_bytes()).is_err());
     }
 
     #[test]
@@ -483,17 +477,17 @@ mod tests {
         let mut iter = skm.iter();
         assert!(iter.next().is_ok());
         assert!(iter.valid());
-        assert_eq!(current_key_val(&iter).unwrap().0, "aba".as_bytes());
+        assert_eq!(current_key_val(&iter).unwrap(), "aba".as_bytes());
         iter.seek(&"abz".as_bytes());
         assert_eq!(
             current_key_val(&iter).unwrap(),
-            ("abz".as_bytes(), "def".as_bytes())
+            "abz".as_bytes()
         );
         // go back to beginning
         iter.seek(&"aba".as_bytes());
         assert_eq!(
             current_key_val(&iter).unwrap(),
-            ("aba".as_bytes(), "def".as_bytes())
+            "aba".as_bytes()
         );
 
         iter.seek(&"".as_bytes());
@@ -508,8 +502,8 @@ mod tests {
     }
 
     fn current_key_val<'a>(
-        iter: &'a Box<dyn 'a + Iter<Item = (&[u8], &[u8])>>,
-    ) -> Option<(&'a [u8], &'a [u8])> {
+        iter: &'a Box<dyn 'a + Iter<Item = &[u8]>>,
+    ) -> Option<&'a [u8]> {
         return match iter.current() {
             Ok(Some(t)) => Some(t),
             _ => None,

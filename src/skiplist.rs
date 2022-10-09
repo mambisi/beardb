@@ -1,3 +1,4 @@
+use crate::cmp::{Comparator, DefaultComparator, MemTableComparator};
 use crate::error::Error;
 use crate::iter::Iter;
 use bumpalo::{boxed::Box, collections::Vec, vec, Bump};
@@ -28,6 +29,7 @@ impl<'a> Node<'a> {
 }
 
 pub struct InnerSkipList<'a> {
+    cmp: Rc<std::boxed::Box<dyn Comparator>>,
     arena: &'a Bump,
     head: Box<'a, Node<'a>>,
     rand: StdRng,
@@ -82,7 +84,7 @@ impl<'a> Display for InnerSkipList<'a> {
 }
 
 impl<'a> InnerSkipList<'a> {
-    pub fn new(arena: &'a Bump) -> InnerSkipList<'a> {
+    pub fn new(arena: &'a Bump, cmp: Rc<std::boxed::Box<dyn Comparator>>) -> InnerSkipList<'a> {
         let head = Box::new_in(
             Node {
                 key: arena.alloc_slice_copy(&[]),
@@ -91,6 +93,7 @@ impl<'a> InnerSkipList<'a> {
             arena,
         );
         InnerSkipList {
+            cmp,
             arena,
             head,
             rand: StdRng::seed_from_u64(0xdeadbeef),
@@ -117,7 +120,7 @@ impl<'a> InnerSkipList<'a> {
         height
     }
 
-    fn find_greater_or_equal(&self, key: &[u8]) -> Option<&'a Node<'a>> {
+    fn find_greater_or_equal(&self, key: &[u8]) -> crate::Result<Option<&'a Node<'a>>> {
         let mut current = self.head.as_ref() as *const Node;
         let mut level = self.max_height - 1;
 
@@ -125,15 +128,15 @@ impl<'a> InnerSkipList<'a> {
             unsafe {
                 let next = (*current).next(level);
                 if let Some(next) = next {
-                    match (*next).key.cmp(key) {
+                    match self.cmp.cmp((*next).key, key)? {
                         Ordering::Less => {
                             current = next;
                             continue;
                         }
-                        Ordering::Equal => return next.as_ref(),
+                        Ordering::Equal => return Ok(next.as_ref()),
                         Ordering::Greater => {
                             if level == 0 {
-                                return next.as_ref();
+                                return Ok(next.as_ref());
                             }
                         }
                     }
@@ -146,17 +149,17 @@ impl<'a> InnerSkipList<'a> {
         }
 
         unsafe {
-            if current == self.head.as_ref() {
+            Ok(if current == self.head.as_ref() {
                 None
             } else if (*current).key.lt(key) {
                 None
             } else {
                 current.as_ref()
-            }
+            })
         }
     }
 
-    fn find_less_than(&self, key: &[u8]) -> Option<&'a Node<'a>> {
+    fn find_less_than(&self, key: &[u8]) -> crate::Result<Option<&'a Node<'a>>> {
         let mut current = self.head.as_ref() as *const Node;
         let mut level = self.max_height - 1;
         loop {
@@ -174,13 +177,13 @@ impl<'a> InnerSkipList<'a> {
             level -= 1;
         }
         unsafe {
-            if current == self.head.as_ref() {
+            Ok(if current == self.head.as_ref() {
                 None
-            } else if (*current).key.ge(key) {
+            } else if self.cmp.cmp((*current).key, key)? != Ordering::Less {
                 None
             } else {
                 current.as_ref()
-            }
+            })
         }
     }
 
@@ -218,10 +221,13 @@ impl<'a> InnerSkipList<'a> {
         loop {
             unsafe {
                 if let Some(next) = (*current).next(level) {
-                    if (*next).key.eq(key) {
+
+                    let ord = self.cmp.cmp((*next).key, key)?;
+
+                    if ord == Ordering::Equal {
                         return Err(Error::DuplicateEntry);
                     }
-                    if (*next).key.lt(key) {
+                    if ord == Ordering::Less{
                         current = next;
                         continue;
                     }
@@ -257,11 +263,13 @@ impl<'a> InnerSkipList<'a> {
         Ok(())
     }
 
-    fn contains(&self, key: &[u8]) -> bool {
-        if let Some(node) = self.find_greater_or_equal(key) {
-            return node.key.eq(key);
+    fn contains(&self, key: &[u8]) -> crate::Result<bool> {
+        if let Some(node) = self.find_greater_or_equal(key)? {
+            return self.cmp.cmp(node.key,key).map(|ord|{
+                ord == Ordering::Equal
+            });
         }
-        false
+        Ok(false)
     }
 
     fn len(&self) -> usize {
@@ -274,9 +282,18 @@ pub struct SkipList<'a> {
 }
 
 impl<'a> SkipList<'a> {
-    pub fn new(arena: &'a Bump) -> Self {
+    pub fn new(arena: &'a Bump, cmp: Rc<std::boxed::Box<dyn Comparator>>) -> Self {
         Self {
-            inner: Rc::new(RefCell::new(InnerSkipList::new(arena))),
+            inner: Rc::new(RefCell::new(InnerSkipList::new(arena, cmp))),
+        }
+    }
+
+    pub fn default(arena: &'a Bump) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(InnerSkipList::new(
+                arena,
+                Rc::new(std::boxed::Box::new(DefaultComparator)),
+            ))),
         }
     }
 
@@ -284,7 +301,7 @@ impl<'a> SkipList<'a> {
         self.inner.borrow_mut().insert(key)
     }
 
-    fn contains(&self, key: &[u8]) -> bool {
+    fn contains(&self, key: &[u8]) -> crate::Result<bool> {
         self.inner.borrow().contains(key)
     }
 
@@ -324,7 +341,7 @@ impl<'a> Iter for SkipMapIterator<'a> {
     fn prev(&mut self) -> crate::Result<()> {
         self.is_valid()?;
         unsafe {
-            match self.map.borrow().find_less_than((*self.node).key) {
+            match self.map.borrow().find_less_than((*self.node).key)? {
                 None => self.node = std::ptr::null(),
                 Some(node) => self.node = node,
             }
@@ -348,11 +365,12 @@ impl<'a> Iter for SkipMapIterator<'a> {
         unsafe { Ok(Some((*self.node).key)) }
     }
 
-    fn seek(&mut self, target: &[u8]) {
-        match self.map.borrow().find_greater_or_equal(target) {
+    fn seek(&mut self, target: &[u8]) -> crate::Result<()> {
+        match self.map.borrow().find_greater_or_equal(target)? {
             None => self.node = std::ptr::null(),
             Some(node) => self.node = node,
         }
+        Ok(())
     }
 
     fn seek_to_first(&mut self) {
@@ -372,13 +390,15 @@ impl<'a> Iter for SkipMapIterator<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::cmp::DefaultComparator;
     use crate::iter::Iter;
     use crate::skiplist::{InnerSkipList, SkipList, SkipMapIterator};
     use crate::Error::Unknown;
     use bumpalo::Bump;
+    use std::rc::Rc;
 
     pub fn make_skipmap(arena: &Bump) -> InnerSkipList {
-        let mut skm = InnerSkipList::new(arena);
+        let mut skm = InnerSkipList::new(arena, Rc::new(Box::new(DefaultComparator)));
         let keys = vec![
             "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
             "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",
@@ -392,7 +412,7 @@ mod tests {
     }
 
     pub fn make_skipmap_t(arena: &Bump) -> SkipList {
-        let mut skm = SkipList::new(arena);
+        let mut skm = SkipList::default(arena);
         let keys = vec![
             "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
             "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",
@@ -426,33 +446,34 @@ mod tests {
         let arena = Bump::new();
         let skm = make_skipmap(&arena);
         assert_eq!(
-            skm.find_greater_or_equal("abf".as_bytes()).unwrap().key,
+            skm.find_greater_or_equal("abf".as_bytes()).unwrap().unwrap().key,
             "abf".as_bytes()
         );
         assert!(skm
-            .find_greater_or_equal(&"ab{".as_bytes().to_vec())
+            .find_greater_or_equal(&"ab{".as_bytes().to_vec()).unwrap()
             .is_none());
         assert_eq!(
             skm.find_greater_or_equal(&"aaa".as_bytes().to_vec())
+                .unwrap()
                 .unwrap()
                 .key,
             "aba".as_bytes().to_vec()
         );
         assert_eq!(
-            skm.find_greater_or_equal(&"ab".as_bytes()).unwrap().key,
+            skm.find_greater_or_equal(&"ab".as_bytes()).unwrap().unwrap().key,
             "aba".as_bytes()
         );
         assert_eq!(
-            skm.find_greater_or_equal(&"abc".as_bytes()).unwrap().key,
+            skm.find_greater_or_equal(&"abc".as_bytes()).unwrap().unwrap().key,
             "abc".as_bytes()
         );
-        assert!(skm.find_less_than(&"ab0".as_bytes()).is_none());
+        assert!(skm.find_less_than(&"ab0".as_bytes()).unwrap().is_none());
         assert_eq!(
-            skm.find_less_than(&"abd".as_bytes()).unwrap().key,
+            skm.find_less_than(&"abd".as_bytes()).unwrap().unwrap().key,
             "abc".as_bytes()
         );
         assert_eq!(
-            skm.find_less_than(&"ab{".as_bytes()).unwrap().key,
+            skm.find_less_than(&"ab{".as_bytes()).unwrap().unwrap().key,
             "abz".as_bytes()
         );
     }
@@ -461,13 +482,13 @@ mod tests {
     fn test_contains() {
         let arena = Bump::new();
         let skm = make_skipmap(&arena);
-        assert!(skm.contains("aby".as_bytes()));
-        assert!(skm.contains("abc".as_bytes()));
-        assert!(skm.contains("abz".as_bytes()));
-        assert!(!skm.contains("ab{".as_bytes()));
-        assert!(!skm.contains("123".as_bytes()));
-        assert!(!skm.contains("aaa".as_bytes()));
-        assert!(!skm.contains("456".as_bytes()));
+        assert!(skm.contains("aby".as_bytes()).unwrap());
+        assert!(skm.contains("abc".as_bytes()).unwrap());
+        assert!(skm.contains("abz".as_bytes()).unwrap());
+        assert!(!skm.contains("ab{".as_bytes()).unwrap());
+        assert!(!skm.contains("123".as_bytes()).unwrap());
+        assert!(!skm.contains("aaa".as_bytes()).unwrap());
+        assert!(!skm.contains("456".as_bytes()).unwrap());
     }
 
     #[test]
@@ -479,16 +500,10 @@ mod tests {
         assert!(iter.valid());
         assert_eq!(current_key_val(&iter).unwrap(), "aba".as_bytes());
         iter.seek(&"abz".as_bytes());
-        assert_eq!(
-            current_key_val(&iter).unwrap(),
-            "abz".as_bytes()
-        );
+        assert_eq!(current_key_val(&iter).unwrap(), "abz".as_bytes());
         // go back to beginning
         iter.seek(&"aba".as_bytes());
-        assert_eq!(
-            current_key_val(&iter).unwrap(),
-            "aba".as_bytes()
-        );
+        assert_eq!(current_key_val(&iter).unwrap(), "aba".as_bytes());
 
         iter.seek(&"".as_bytes());
         assert!(iter.valid());
@@ -501,9 +516,7 @@ mod tests {
         assert_eq!(current_key_val(&iter), None);
     }
 
-    fn current_key_val<'a>(
-        iter: &'a Box<dyn 'a + Iter<Item = &[u8]>>,
-    ) -> Option<&'a [u8]> {
+    fn current_key_val<'a>(iter: &'a Box<dyn 'a + Iter<Item = &[u8]>>) -> Option<&'a [u8]> {
         return match iter.current() {
             Ok(Some(t)) => Some(t),
             _ => None,

@@ -9,3 +9,5 @@ edition = "2021"
 bumpalo = {version = "3.11.0", features = ["collections", "allocator_api", "boxed"]}
 rand = "0.8.5"
 thiserror = "1.0.37"
+rkyv = { version = "0.7", features = ["validation", "bytecheck"] }
+bytecheck = "0.6.9"

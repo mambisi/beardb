@@ -13,4 +13,7 @@ pub enum Error {
     InvalidIterator,
     #[error("duplicate entry")]
     DuplicateEntry,
+
+    #[error("error encoding or decoding")]
+    CodecError,
 }

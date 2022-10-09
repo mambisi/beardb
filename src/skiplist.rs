@@ -1,13 +1,14 @@
-use std::cell::RefCell;
 use crate::iter::Iter;
 use bumpalo::{boxed::Box, collections::Vec, vec, Bump};
 use rand::prelude::StdRng;
 use rand::{RngCore, SeedableRng};
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::fmt::{Debug, Display, Formatter};
+use std::ops::Deref;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::AtomicPtr;
+use std::sync::Arc;
 
 const MAX_HEIGHT: usize = 12;
 const BRANCHING_FACTOR: u32 = 4;
@@ -29,7 +30,7 @@ impl<'a> Node<'a> {
     }
 }
 
-pub struct SkipMap<'a> {
+pub struct InnerSkipMap<'a> {
     arena: &'a Bump,
     head: Box<'a, Node<'a>>,
     rand: StdRng,
@@ -37,7 +38,7 @@ pub struct SkipMap<'a> {
     len: usize,
 }
 
-impl<'a> Debug for SkipMap<'a> {
+impl<'a> Debug for InnerSkipMap<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut list = f.debug_map();
 
@@ -57,24 +58,23 @@ impl<'a> Debug for SkipMap<'a> {
     }
 }
 
-
-impl<'a> Display for SkipMap<'a> {
+impl<'a> Display for InnerSkipMap<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         use std::fmt::Write;
         let mut w = String::new();
         unsafe {
             let mut current = self.head.as_ref() as *const Node;
             loop {
-
                 let next = (*current).next(0);
                 if let Some(next) = next {
                     current = next;
-                    writeln!(&mut w,
-                             "{:?} {:?}/{:?} - {:?}",
-                             current,
-                             (*current).key,
-                             (*current).value,
-                             (*current).skips
+                    writeln!(
+                        &mut w,
+                        "{:?} {:?}/{:?} - {:?}",
+                        current,
+                        (*current).key,
+                        (*current).value,
+                        (*current).skips
                     )?;
                 } else {
                     break;
@@ -85,8 +85,8 @@ impl<'a> Display for SkipMap<'a> {
     }
 }
 
-impl<'a> SkipMap<'a> {
-    pub fn new(arena: &'a Bump) -> SkipMap<'a> {
+impl<'a> InnerSkipMap<'a> {
+    pub fn new(arena: &'a Bump) -> InnerSkipMap<'a> {
         let head = Box::new_in(
             Node {
                 key: arena.alloc_slice_copy(&[]),
@@ -95,7 +95,7 @@ impl<'a> SkipMap<'a> {
             },
             arena,
         );
-        SkipMap {
+        InnerSkipMap {
             arena,
             head,
             rand: StdRng::seed_from_u64(0xdeadbeef),
@@ -192,6 +192,35 @@ impl<'a> SkipMap<'a> {
         }
     }
 
+
+    fn find_last(&self) -> Option<&'a Node<'a>> {
+        let mut current = self.head.as_ref() as *const Node;
+        let mut level = self.max_height - 1;
+
+        loop {
+            unsafe {
+                let next = (*current).next(level);
+                if let Some(next) = next {
+                    current = next;
+                    continue
+                }
+            }
+            if level == 0 {
+                break;
+            }
+            level -= 1;
+        }
+
+        unsafe {
+            if current == self.head.as_ref() {
+                None
+            } else {
+                current.as_ref()
+            }
+        }
+    }
+
+
     fn insert(&mut self, key: &[u8], value: &[u8]) {
         assert!(!key.is_empty());
         let mut prevs = std::vec![None; MAX_HEIGHT];
@@ -238,7 +267,7 @@ impl<'a> SkipMap<'a> {
 
     fn contains(&self, key: &[u8]) -> bool {
         if let Some(node) = self.find_greater_or_equal(key) {
-            return node.key.eq(key)
+            return node.key.eq(key);
         }
         false
     }
@@ -248,8 +277,43 @@ impl<'a> SkipMap<'a> {
     }
 }
 
+pub struct SkipMap<'a> {
+    inner: Rc<RefCell<InnerSkipMap<'a>>>,
+}
+
+impl<'a> SkipMap<'a> {
+    pub fn new(arena: &'a Bump) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(InnerSkipMap::new(arena))),
+        }
+    }
+
+    fn insert(&mut self, key: &[u8], value: &[u8]) {
+        self.inner.borrow_mut().insert(key,value)
+    }
+
+    fn contains(&self, key: &[u8]) -> bool {
+        self.inner.borrow().contains(key)
+    }
+
+    fn len(&self) -> usize {
+        self.inner.borrow().len()
+    }
+
+    fn iter(&self) -> std::boxed::Box<dyn 'a + Iter<Item=(&'a [u8], &'a [u8])>> {
+        std::boxed::Box::new(
+            SkipMapIterator {
+                map: self.inner.clone(),
+                node: self.inner.borrow().head.as_ref() as *const Node
+            }
+        )
+
+    }
+}
+
+
 struct SkipMapIterator<'a> {
-    map: Rc<RefCell<SkipMap<'a>>>,
+    map: Rc<RefCell<InnerSkipMap<'a>>>,
     node: *const Node<'a>,
 }
 
@@ -261,20 +325,22 @@ impl<'a> Iter for SkipMapIterator<'a> {
     }
 
     fn prev(&mut self) {
-        todo!()
+        assert!(self.valid());
+        unsafe {
+            match self.map.borrow().find_less_than((*self.node).key) {
+                None => self.node = std::ptr::null(),
+                Some(node) => self.node = node,
+            }
+        }
     }
 
     fn next(&mut self) {
         assert!(self.valid());
         unsafe {
-           match (*self.node).next(0) {
-               None => {
-                   self.node = std::ptr::null()
-               }
-               Some(node) => {
-                   self.node = node
-               }
-           }
+            match (*self.node).next(0) {
+                None => self.node = std::ptr::null(),
+                Some(node) => self.node = node,
+            }
         }
     }
 
@@ -283,40 +349,40 @@ impl<'a> Iter for SkipMapIterator<'a> {
         unsafe {
             if self.node.is_null() {
                 None
-            }else {
-                Some(((*self.node).key,(*self.node).key))
+            } else {
+                Some(((*self.node).key, (*self.node).key))
             }
         }
     }
 
     fn seek(&mut self, target: &[u8]) {
-        unsafe {
-            match self.map.borrow().find_greater_or_equal(target) {
-                None => {
-                    self.node = std::ptr::null()
-                }
-                Some(node) => {
-                    self.node = node
-                }
-            }
+        match self.map.borrow().find_greater_or_equal(target) {
+            None => self.node = std::ptr::null(),
+            Some(node) => self.node = node,
         }
     }
 
     fn seek_to_first(&mut self) {
-        todo!()
+        match self.map.borrow().head.next(0) {
+            None => self.node = std::ptr::null(),
+            Some(node) => self.node = node,
+        }
     }
 
     fn seek_to_last(&mut self) {
-        todo!()
+        match self.map.borrow().find_last() {
+            None => self.node = std::ptr::null(),
+            Some(node) => self.node = node,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::skiplist::SkipMap;
+    use crate::skiplist::InnerSkipMap;
     use bumpalo::Bump;
-    pub fn make_skipmap(arena: &Bump) -> SkipMap {
-        let mut skm = SkipMap::new(arena);
+    pub fn make_skipmap(arena: &Bump) -> InnerSkipMap {
+        let mut skm = InnerSkipMap::new(arena);
         let keys = vec![
             "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
             "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",

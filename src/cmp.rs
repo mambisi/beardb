@@ -1,7 +1,7 @@
+use crate::codec::Codec;
 use crate::types::MemEntry;
 use crate::Error;
 use std::cmp::Ordering;
-use crate::codec::Codec;
 
 pub trait Comparator {
     fn cmp(&self, a: &[u8], b: &[u8]) -> crate::Result<Ordering>;
@@ -15,20 +15,13 @@ impl Comparator for MemTableComparator {
         let b = MemEntry::decode(b)?;
 
         let ord = match a.key.cmp(&b.key) {
-            Ordering::Less => {
-                Ordering::Less
-            }
-            Ordering::Equal => {
-                a.tag.cmp(&b.tag)
-            }
-            Ordering::Greater => {
-                Ordering::Greater
-            }
+            Ordering::Less => Ordering::Less,
+            Ordering::Equal => a.tag.cmp(&b.tag),
+            Ordering::Greater => Ordering::Greater,
         };
         Ok(ord)
     }
 }
-
 
 pub struct DefaultComparator;
 

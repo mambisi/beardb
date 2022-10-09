@@ -221,13 +221,12 @@ impl<'a> InnerSkipList<'a> {
         loop {
             unsafe {
                 if let Some(next) = (*current).next(level) {
-
                     let ord = self.cmp.cmp((*next).key, key)?;
 
                     if ord == Ordering::Equal {
                         return Err(Error::DuplicateEntry);
                     }
-                    if ord == Ordering::Less{
+                    if ord == Ordering::Less {
                         current = next;
                         continue;
                     }
@@ -265,9 +264,10 @@ impl<'a> InnerSkipList<'a> {
 
     fn contains(&self, key: &[u8]) -> crate::Result<bool> {
         if let Some(node) = self.find_greater_or_equal(key)? {
-            return self.cmp.cmp(node.key,key).map(|ord|{
-                ord == Ordering::Equal
-            });
+            return self
+                .cmp
+                .cmp(node.key, key)
+                .map(|ord| ord == Ordering::Equal);
         }
         Ok(false)
     }
@@ -446,11 +446,15 @@ mod tests {
         let arena = Bump::new();
         let skm = make_skipmap(&arena);
         assert_eq!(
-            skm.find_greater_or_equal("abf".as_bytes()).unwrap().unwrap().key,
+            skm.find_greater_or_equal("abf".as_bytes())
+                .unwrap()
+                .unwrap()
+                .key,
             "abf".as_bytes()
         );
         assert!(skm
-            .find_greater_or_equal(&"ab{".as_bytes().to_vec()).unwrap()
+            .find_greater_or_equal(&"ab{".as_bytes().to_vec())
+            .unwrap()
             .is_none());
         assert_eq!(
             skm.find_greater_or_equal(&"aaa".as_bytes().to_vec())
@@ -460,11 +464,17 @@ mod tests {
             "aba".as_bytes().to_vec()
         );
         assert_eq!(
-            skm.find_greater_or_equal(&"ab".as_bytes()).unwrap().unwrap().key,
+            skm.find_greater_or_equal(&"ab".as_bytes())
+                .unwrap()
+                .unwrap()
+                .key,
             "aba".as_bytes()
         );
         assert_eq!(
-            skm.find_greater_or_equal(&"abc".as_bytes()).unwrap().unwrap().key,
+            skm.find_greater_or_equal(&"abc".as_bytes())
+                .unwrap()
+                .unwrap()
+                .key,
             "abc".as_bytes()
         );
         assert!(skm.find_less_than(&"ab0".as_bytes()).unwrap().is_none());

@@ -1,10 +1,10 @@
-use bytecheck::CheckBytes;
-use rkyv::{Archive, Deserialize, Serialize};
-use std::cmp::Ordering;
-use rkyv::ser::Serializer;
-use rkyv::ser::serializers::AllocSerializer;
 use crate::codec::Codec;
 use crate::Error;
+use bytecheck::CheckBytes;
+use rkyv::ser::serializers::AllocSerializer;
+use rkyv::ser::Serializer;
+use rkyv::{Archive, Deserialize, Serialize};
+use std::cmp::Ordering;
 
 #[derive(Archive, Deserialize, Serialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[archive(compare(PartialEq))]
@@ -73,7 +73,7 @@ impl Codec for MemEntry {
     }
 
     fn decode(buf: &[u8]) -> crate::Result<&Self::ArchivedType> {
-        rkyv::check_archived_root::<MemEntry>( buf).map_err(|err| Error::CodecError)
+        rkyv::check_archived_root::<MemEntry>(buf).map_err(|err| Error::CodecError)
     }
 }
 
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn test_comparator() {
-        let a = MemEntry::new(ValueType::Value, vec![4,4,4], vec![5,5,5]);
+        let a = MemEntry::new(ValueType::Value, vec![4, 4, 4], vec![5, 5, 5]);
         println!("{:?}", a.encode().unwrap())
     }
 }

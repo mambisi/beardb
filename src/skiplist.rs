@@ -6,18 +6,10 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
-use thiserror::Error as TError;
+use crate::error::Error;
 
 const MAX_HEIGHT: usize = 12;
 const BRANCHING_FACTOR: u32 = 4;
-
-#[derive(TError, Debug)]
-pub enum SkipListError {
-    #[error("invalid iterator")]
-    InvalidIterator,
-    #[error("duplicate entry")]
-    DuplicateEntry,
-}
 
 #[derive(Debug)]
 struct Node<'a> {
@@ -233,7 +225,7 @@ impl<'a> InnerSkipMap<'a> {
             unsafe {
                 if let Some(next) = (*current).next(level) {
                     if (*next).key.eq(key){
-                        return Err(SkipListError::DuplicateEntry.into())
+                        return Err(Error::DuplicateEntry)
                     }
                     if (*next).key.lt(key) {
                         current = next;
@@ -322,7 +314,7 @@ struct SkipMapIterator<'a> {
 impl<'a> SkipMapIterator<'a> {
     fn is_valid(&self) -> crate::Result<()> {
         if !self.node.is_null() {
-            return Err(SkipListError::InvalidIterator.into());
+            return Err(Error::InvalidIterator);
         }
         Ok(())
     }

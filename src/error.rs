@@ -5,8 +5,12 @@ use thiserror::Error;
 pub enum Error {
     #[error("io error {0}")]
     IOError(#[from] io::Error),
-    #[error("io error {0}")]
-    SkipListError(#[from] crate::skiplist::SkipListError),
     #[error("unknown data store error")]
     Unknown,
+
+    // skip list errors
+    #[error("invalid iterator")]
+    InvalidIterator,
+    #[error("duplicate entry")]
+    DuplicateEntry,
 }

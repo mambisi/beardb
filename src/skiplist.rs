@@ -5,13 +5,19 @@ use rand::{RngCore, SeedableRng};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::fmt::{Debug, Display, Formatter};
-use std::ops::Deref;
 use std::rc::Rc;
-use std::sync::atomic::AtomicPtr;
-use std::sync::Arc;
+use thiserror::Error as TError;
 
 const MAX_HEIGHT: usize = 12;
 const BRANCHING_FACTOR: u32 = 4;
+
+#[derive(TError, Debug)]
+pub enum SkipListError {
+    #[error("invalid iterator")]
+    InvalidIterator,
+    #[error("duplicate entry")]
+    DuplicateEntry,
+}
 
 #[derive(Debug)]
 struct Node<'a> {
@@ -192,7 +198,6 @@ impl<'a> InnerSkipMap<'a> {
         }
     }
 
-
     fn find_last(&self) -> Option<&'a Node<'a>> {
         let mut current = self.head.as_ref() as *const Node;
         let mut level = self.max_height - 1;
@@ -202,7 +207,7 @@ impl<'a> InnerSkipMap<'a> {
                 let next = (*current).next(level);
                 if let Some(next) = next {
                     current = next;
-                    continue
+                    continue;
                 }
             }
             if level == 0 {
@@ -220,16 +225,16 @@ impl<'a> InnerSkipMap<'a> {
         }
     }
 
-
-    fn insert(&mut self, key: &[u8], value: &[u8]) {
-        assert!(!key.is_empty());
+    fn insert(&mut self, key: &[u8], value: &[u8]) -> crate::Result<()>{
         let mut prevs = std::vec![None; MAX_HEIGHT];
         let mut current = self.head.as_mut() as *mut Node;
         let mut level = self.max_height - 1;
         loop {
             unsafe {
                 if let Some(next) = (*current).next(level) {
-                    assert_ne!((*next).key, key, "duplicate entry");
+                    if (*next).key.eq(key){
+                        return Err(SkipListError::DuplicateEntry.into())
+                    }
                     if (*next).key.lt(key) {
                         current = next;
                         continue;
@@ -263,6 +268,7 @@ impl<'a> InnerSkipMap<'a> {
         }
 
         self.len += 1;
+        Ok(())
     }
 
     fn contains(&self, key: &[u8]) -> bool {
@@ -288,8 +294,8 @@ impl<'a> SkipMap<'a> {
         }
     }
 
-    fn insert(&mut self, key: &[u8], value: &[u8]) {
-        self.inner.borrow_mut().insert(key,value)
+    fn insert(&mut self, key: &[u8], value: &[u8]) -> crate::Result<()> {
+        self.inner.borrow_mut().insert(key, value)
     }
 
     fn contains(&self, key: &[u8]) -> bool {
@@ -300,59 +306,60 @@ impl<'a> SkipMap<'a> {
         self.inner.borrow().len()
     }
 
-    fn iter(&self) -> std::boxed::Box<dyn 'a + Iter<Item=(&'a [u8], &'a [u8])>> {
-        std::boxed::Box::new(
-            SkipMapIterator {
-                map: self.inner.clone(),
-                node: self.inner.borrow().head.as_ref() as *const Node
-            }
-        )
-
+    fn iter(&self) -> std::boxed::Box<dyn 'a + Iter<Item = (&'a [u8], &'a [u8])>> {
+        std::boxed::Box::new(SkipMapIterator {
+            map: self.inner.clone(),
+            node: self.inner.borrow().head.as_ref() as *const Node,
+        })
     }
 }
-
 
 struct SkipMapIterator<'a> {
     map: Rc<RefCell<InnerSkipMap<'a>>>,
     node: *const Node<'a>,
 }
 
+impl<'a> SkipMapIterator<'a> {
+    fn is_valid(&self) -> crate::Result<()> {
+        if !self.node.is_null() {
+            return Err(SkipListError::InvalidIterator.into());
+        }
+        Ok(())
+    }
+}
+
 impl<'a> Iter for SkipMapIterator<'a> {
     type Item = (&'a [u8], &'a [u8]);
 
     fn valid(&self) -> bool {
-        !self.node.is_null()
+        self.is_valid().is_ok()
     }
 
-    fn prev(&mut self) {
-        assert!(self.valid());
+    fn prev(&mut self) -> crate::Result<()> {
+        self.is_valid()?;
         unsafe {
             match self.map.borrow().find_less_than((*self.node).key) {
                 None => self.node = std::ptr::null(),
                 Some(node) => self.node = node,
             }
         }
+        Ok(())
     }
 
-    fn next(&mut self) {
-        assert!(self.valid());
+    fn next(&mut self) -> crate::Result<()> {
+        self.is_valid()?;
         unsafe {
             match (*self.node).next(0) {
                 None => self.node = std::ptr::null(),
                 Some(node) => self.node = node,
             }
         }
+        Ok(())
     }
 
-    fn current(&self) -> Option<Self::Item> {
-        assert!(self.valid());
-        unsafe {
-            if self.node.is_null() {
-                None
-            } else {
-                Some(((*self.node).key, (*self.node).key))
-            }
-        }
+    fn current(&self) -> crate::Result<Option<Self::Item>> {
+        self.is_valid()?;
+        unsafe { Ok(Some(((*self.node).key, (*self.node).key))) }
     }
 
     fn seek(&mut self, target: &[u8]) {
@@ -381,6 +388,7 @@ impl<'a> Iter for SkipMapIterator<'a> {
 mod tests {
     use crate::skiplist::InnerSkipMap;
     use bumpalo::Bump;
+
     pub fn make_skipmap(arena: &Bump) -> InnerSkipMap {
         let mut skm = InnerSkipMap::new(arena);
         let keys = vec![
@@ -390,7 +398,7 @@ mod tests {
         ];
 
         for k in keys {
-            skm.insert(k.as_bytes(), "def".as_bytes());
+            skm.insert(k.as_bytes(), "def".as_bytes()).unwrap();
         }
         skm
     }
@@ -404,13 +412,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn test_no_dupes() {
         let arena = Bump::new();
         let mut skm = make_skipmap(&arena);
-        // this should panic
-        skm.insert("abc".as_bytes(), "def".as_bytes());
-        skm.insert("abf".as_bytes(), "def".as_bytes());
+        assert!(skm.insert("abc".as_bytes(), "def".as_bytes()).is_err());
+        assert!(skm.insert("abf".as_bytes(), "def".as_bytes()).is_err());
     }
 
     #[test]

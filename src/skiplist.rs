@@ -1,12 +1,13 @@
+use std::cell::RefCell;
 use crate::iter::Iter;
 use bumpalo::{boxed::Box, collections::Vec, vec, Bump};
 use rand::prelude::StdRng;
 use rand::{RngCore, SeedableRng};
-use std::array::IntoIter;
 use std::cmp::Ordering;
-use std::fmt::{Debug, Display, Formatter, Pointer};
-use std::marker::PhantomData;
-use std::thread::current;
+use std::fmt::{Debug, Display, Formatter};
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::AtomicPtr;
 
 const MAX_HEIGHT: usize = 12;
 const BRANCHING_FACTOR: u32 = 4;
@@ -191,7 +192,7 @@ impl<'a> SkipMap<'a> {
         }
     }
 
-    pub fn insert(&mut self, key: &[u8], value: &[u8]) {
+    fn insert(&mut self, key: &[u8], value: &[u8]) {
         assert!(!key.is_empty());
         let mut prevs = std::vec![None; MAX_HEIGHT];
         let mut current = self.head.as_mut() as *mut Node;
@@ -235,20 +236,20 @@ impl<'a> SkipMap<'a> {
         self.len += 1;
     }
 
-    pub fn contains(&self, key: &[u8]) -> bool {
+    fn contains(&self, key: &[u8]) -> bool {
         if let Some(node) = self.find_greater_or_equal(key) {
-            unsafe { return node.key.eq(key) }
+            return node.key.eq(key)
         }
         false
     }
 
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.len
     }
 }
 
 struct SkipMapIterator<'a> {
-    map: *const SkipMap<'a>,
+    map: Rc<RefCell<SkipMap<'a>>>,
     node: *const Node<'a>,
 }
 
@@ -256,7 +257,7 @@ impl<'a> Iter for SkipMapIterator<'a> {
     type Item = (&'a [u8], &'a [u8]);
 
     fn valid(&self) -> bool {
-        todo!()
+        !self.node.is_null()
     }
 
     fn prev(&mut self) {
@@ -264,15 +265,41 @@ impl<'a> Iter for SkipMapIterator<'a> {
     }
 
     fn next(&mut self) {
-        todo!()
+        assert!(self.valid());
+        unsafe {
+           match (*self.node).next(0) {
+               None => {
+                   self.node = std::ptr::null()
+               }
+               Some(node) => {
+                   self.node = node
+               }
+           }
+        }
     }
 
     fn current(&self) -> Option<Self::Item> {
-        todo!()
+        assert!(self.valid());
+        unsafe {
+            if self.node.is_null() {
+                None
+            }else {
+                Some(((*self.node).key,(*self.node).key))
+            }
+        }
     }
 
     fn seek(&mut self, target: &[u8]) {
-        todo!()
+        unsafe {
+            match self.map.borrow().find_greater_or_equal(target) {
+                None => {
+                    self.node = std::ptr::null()
+                }
+                Some(node) => {
+                    self.node = node
+                }
+            }
+        }
     }
 
     fn seek_to_first(&mut self) {
@@ -359,7 +386,7 @@ mod tests {
     #[test]
     fn test_contains() {
         let arena = Bump::new();
-        let mut skm = make_skipmap(&arena);
+        let skm = make_skipmap(&arena);
         assert!(skm.contains("aby".as_bytes()));
         assert!(skm.contains("abc".as_bytes()));
         assert!(skm.contains("abz".as_bytes()));

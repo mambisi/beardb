@@ -1,10 +1,10 @@
 use std::io;
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, PartialEq, Debug)]
 pub enum Error {
     #[error("io error {0}")]
-    IOError(#[from] io::Error),
+    IOError(String),
     #[error("unknown data store error")]
     Unknown,
 
@@ -16,4 +16,14 @@ pub enum Error {
 
     #[error("error encoding or decoding")]
     CodecError,
+
+    #[error("corruption {0}")]
+    Corruption(String),
+}
+
+
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Self {
+        Self::IOError(format!("{}", err))
+    }
 }

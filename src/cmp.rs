@@ -11,15 +11,16 @@ pub struct MemTableComparator;
 
 impl Comparator for MemTableComparator {
     fn cmp(&self, a: &[u8], b: &[u8]) -> crate::Result<Ordering> {
-        let a = MemEntry::decode(a)?;
-        let b = MemEntry::decode(b)?;
-
-        let ord = match a.key.cmp(&b.key) {
-            Ordering::Less => Ordering::Less,
-            Ordering::Equal => a.tag.cmp(&b.tag),
-            Ordering::Greater => Ordering::Greater,
-        };
-        Ok(ord)
+        // let a = MemEntry::decode(a)?;
+        // let b = MemEntry::decode(b)?;
+        //
+        // let ord = match a.key.cmp(&b.key) {
+        //     Ordering::Less => Ordering::Less,
+        //     Ordering::Equal => b.seq.cmp(&a.seq),
+        //     Ordering::Greater => Ordering::Greater,
+        // };
+        // Ok(ord)
+        todo!()
     }
 }
 

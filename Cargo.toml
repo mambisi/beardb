@@ -10,4 +10,7 @@ bumpalo = {version = "3.11.0", features = ["collections", "allocator_api", "boxe
 rand = "0.8.5"
 thiserror = "1.0.37"
 rkyv = { version = "0.7", features = ["validation", "bytecheck"] }
+crc32fast = "1.3.2"
 bytecheck = "0.6.9"
+[dev-dependencies]
+pretty_assertions = "1.3.0"

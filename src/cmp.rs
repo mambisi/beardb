@@ -1,6 +1,3 @@
-use crate::codec::Codec;
-use crate::types::MemEntry;
-use crate::Error;
 use std::cmp::Ordering;
 
 pub trait Comparator {

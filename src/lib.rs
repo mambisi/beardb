@@ -9,6 +9,7 @@ mod skiplist;
 mod types;
 mod memtable;
 mod log;
+mod sst;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

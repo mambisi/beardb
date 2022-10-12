@@ -1,7 +1,7 @@
 use std::io;
 use thiserror::Error;
 
-#[derive(Error, PartialEq, Debug)]
+#[derive(Error, Debug)]
 pub enum Error {
     #[error("io error {0}")]
     IOError(String),
@@ -19,6 +19,17 @@ pub enum Error {
 
     #[error("corruption {0}")]
     Corruption(String),
+
+    #[error("Error {0}")]
+    AnyError(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        let er_string = format!("{:?}", self);
+        let other_string = format!("{:?}", other);
+        er_string.eq(&other_string)
+    }
 }
 
 

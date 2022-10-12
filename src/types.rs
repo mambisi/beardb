@@ -1,8 +1,6 @@
-use crate::codec::{Codec, Reader};
+use crate::codec::{Codec};
 use crate::{ensure, Error};
-use bytecheck::CheckBytes;
-use std::cmp::Ordering;
-use std::io::{BufRead, Cursor, Read};
+use std::io::{Read};
 use std::mem::size_of;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]

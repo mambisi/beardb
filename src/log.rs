@@ -208,7 +208,6 @@ pub fn unmask_crc(mc: u32) -> u32 {
 mod tests {
     use std::io::Cursor;
     use crate::Error;
-    use crate::Result;
     use crate::log::{LogReader, LogWriter, mask_crc, unmask_crc};
 
     #[test]

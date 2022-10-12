@@ -36,3 +36,20 @@ impl<R> Reader<R> where R : Read {
         return Ok(b)
     }
 }
+
+pub(crate) fn decode_fixed32(d : &[u8]) -> u32 {
+    unsafe {(d.as_ptr() as *const u32).read_unaligned()}
+}
+
+pub(crate) fn encode_fixed32<'a>(d : u32) -> [u8; std::mem::size_of::<u32>()] {
+   d.to_le_bytes()
+}
+
+
+pub(crate) fn decode_fixed64(d : &[u8]) -> u64 {
+    unsafe {(d.as_ptr() as *const u64).read_unaligned()}
+}
+
+pub(crate) fn encode_fixed64<'a>(d : u64) -> [u8; std::mem::size_of::<u64>()] {
+    d.to_le_bytes()
+}

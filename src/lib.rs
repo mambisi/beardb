@@ -10,6 +10,8 @@ mod types;
 mod memtable;
 mod log;
 mod sst;
+mod metadata;
+mod bloom;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

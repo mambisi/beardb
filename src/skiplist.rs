@@ -9,7 +9,8 @@ use std::cmp::Ordering;
 use std::fmt::{Debug, Display, Formatter};
 use std::marker::PhantomData;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicPtr, Ordering as MemoryOrdering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering as MemoryOrdering};
 const MAX_HEIGHT: usize = 12;
 const BRANCHING_FACTOR: u32 = 4;
 
@@ -20,20 +21,20 @@ struct Node {
 }
 
 impl Node {
-    fn next(&self, n: usize) -> *mut Node {
+    fn next(&self, n: usize) -> *const Node {
         unsafe { (*self.skips)[n].load(MemoryOrdering::Acquire)}
     }
 
-    fn set_next(&self, n: usize, node: *mut Node) {
-        unsafe { (*self.skips)[n].store(node, MemoryOrdering::Release) }
+    fn set_next(&self, n: usize, node: *const Node) {
+        unsafe { (*self.skips)[n].store(node as *mut Node, MemoryOrdering::Release) }
     }
 
-    fn nb_next(&self, n: usize) -> *mut Node {
+    fn nb_next(&self, n: usize) -> *const Node {
         unsafe { (*self.skips)[n].load(MemoryOrdering::Relaxed)}
     }
 
-    fn nb_set_next(&self, n: usize, node: *mut Node) {
-        unsafe { (*self.skips)[n].store(node, MemoryOrdering::Relaxed) }
+    fn nb_set_next(&self, n: usize, node: *const Node) {
+        unsafe { (*self.skips)[n].store(node as *mut Node, MemoryOrdering::Relaxed) }
     }
 
     fn key(&self) -> &[u8] {
@@ -43,12 +44,11 @@ impl Node {
 
 
 pub struct InnerSkipList {
-    cmp: Rc<Box<dyn Comparator>>,
+    cmp: Arc<Box<dyn Comparator>>,
     arena: Bump,
     head: Box<Node>,
-    rand: StdRng,
-    max_height: usize,
-    len: usize,
+    max_height: AtomicUsize,
+    len: AtomicUsize,
 }
 
 impl Debug for InnerSkipList {
@@ -98,7 +98,7 @@ impl Display for InnerSkipList {
 }
 
 impl InnerSkipList {
-    pub fn new(arena: Bump, cmp: Rc<Box<dyn Comparator>>) -> InnerSkipList {
+    pub fn new(arena: Bump, cmp: Arc<Box<dyn Comparator>>) -> InnerSkipList {
         let skips = arena.alloc(Vec::with_capacity(MAX_HEIGHT));
         for _ in 0..MAX_HEIGHT {
             skips.push(AtomicPtr::default())
@@ -111,13 +111,12 @@ impl InnerSkipList {
             cmp,
             arena,
             head,
-            rand: StdRng::seed_from_u64(0xdeadbeef),
-            max_height: 1,
-            len: 0,
+            max_height: AtomicUsize::new(1),
+            len: AtomicUsize::default(),
         }
     }
 
-    fn new_node(&mut self, height: usize, key: &[u8]) -> *mut Node {
+    fn new_node(&self, height: usize, key: &[u8]) -> *mut Node {
         let key = self.arena.alloc_slice_copy(key);
         let skips = self.arena.alloc(Vec::with_capacity(height));
         for _ in 0..height {
@@ -129,17 +128,23 @@ impl InnerSkipList {
         })
     }
 
-    fn random_height(&mut self) -> usize {
+    fn random_height(&self) -> usize {
         let mut height = 1;
-        while height < MAX_HEIGHT && self.rand.next_u32() % BRANCHING_FACTOR == 0 {
+        let mut rand = StdRng::seed_from_u64(0xdeadbeef);
+        while height < MAX_HEIGHT && rand.next_u32() % BRANCHING_FACTOR == 0 {
             height += 1;
         }
         height
     }
 
+    fn max_height(&self) -> usize {
+        self.max_height.load(MemoryOrdering::Relaxed)
+    }
+
+
     fn find_greater_or_equal(&self, key: &[u8]) -> crate::Result<Option<&Node>> {
         let mut current = self.head.as_ref() as *const Node;
-        let mut level = self.max_height - 1;
+        let mut level = self.max_height() - 1;
 
         loop {
             unsafe {
@@ -178,7 +183,7 @@ impl InnerSkipList {
 
     fn find_less_than(&self, key: &[u8]) -> crate::Result<Option<&Node>> {
         let mut current = self.head.as_ref() as *const Node;
-        let mut level = self.max_height - 1;
+        let mut level = self.max_height() - 1;
         loop {
             unsafe {
                 let next = (*current).next(level);
@@ -207,7 +212,7 @@ impl InnerSkipList {
 
     fn find_last(&self) -> Option<&Node> {
         let mut current = self.head.as_ref() as *const Node;
-        let mut level = self.max_height - 1;
+        let mut level = self.max_height() - 1;
 
         loop {
             unsafe {
@@ -232,10 +237,10 @@ impl InnerSkipList {
         }
     }
 
-    fn insert(&mut self, key: &[u8]) -> crate::Result<()> {
-        let mut prevs = std::vec![std::ptr::null_mut(); MAX_HEIGHT];
-        let mut current = self.head.as_mut() as *mut Node;
-        let mut level = self.max_height - 1;
+    fn insert(&self, key: &[u8]) -> crate::Result<()> {
+        let mut prevs = std::vec![std::ptr::null(); MAX_HEIGHT];
+        let mut current = self.head.as_ref() as *const Node;
+        let mut level = self.max_height() - 1;
         loop {
             unsafe {
                 let next = (*current).next(level);
@@ -260,13 +265,13 @@ impl InnerSkipList {
         }
 
         let height = self.random_height();
-        let current_height = self.max_height;
+        let current_height = self.max_height();
         prevs.resize(height, std::ptr::null_mut());
         if height > current_height {
             for prev in prevs.iter_mut().skip(current_height) {
-                *prev = self.head.as_mut()
+                *prev = self.head.as_ref()
             }
-            self.max_height = height;
+            self.max_height.store(height, MemoryOrdering::Relaxed);
         }
 
         current = self.new_node(height, key);
@@ -277,7 +282,7 @@ impl InnerSkipList {
             }
         }
 
-        self.len += 1;
+        self.len.fetch_add(1, MemoryOrdering::Relaxed);
         Ok(())
     }
 
@@ -294,59 +299,59 @@ impl InnerSkipList {
     }
 
     fn len(&self) -> usize {
-        self.len
+        self.len.load(MemoryOrdering::Relaxed)
     }
 }
 
 pub struct SkipList {
-    inner: Rc<RefCell<InnerSkipList>>,
+    inner: Arc<InnerSkipList>,
 }
 
 impl SkipList {
-    pub(crate) fn new(cmp: Rc<Box<dyn Comparator>>) -> Self {
+    pub(crate) fn new(cmp: Arc<Box<dyn Comparator>>) -> Self {
         let arena = Bump::new();
         Self {
-            inner: Rc::new(RefCell::new(InnerSkipList::new(arena, cmp))),
+            inner: Arc::new(InnerSkipList::new(arena, cmp)),
         }
     }
 
-    pub(crate) fn new_in_arena(arena: Bump, cmp: Rc<Box<dyn Comparator>>) -> Self {
+    pub(crate) fn new_in_arena(arena: Bump, cmp: Arc<Box<dyn Comparator>>) -> Self {
         Self {
-            inner: Rc::new(RefCell::new(InnerSkipList::new(arena, cmp))),
+            inner: Arc::new(InnerSkipList::new(arena, cmp)),
         }
     }
 
     pub(crate) fn default() -> Self {
-        Self::new(Rc::new(Box::new(DefaultComparator)))
+        Self::new(Arc::new(Box::new(DefaultComparator)))
     }
 
-    pub(crate) fn insert(&mut self, key: &[u8]) -> crate::Result<()> {
-        self.inner.borrow_mut().insert(key)
+    pub(crate) fn insert(&self, key: &[u8]) -> crate::Result<()> {
+        self.inner.insert(key)
     }
 
     pub(crate) fn contains(&self, key: &[u8]) -> crate::Result<bool> {
-        self.inner.borrow().contains(key)
+        self.inner.contains(key)
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.inner.borrow().len()
+        self.inner.len()
     }
 
     pub(crate) fn allocated_bytes(&self) -> usize {
-        self.inner.borrow().arena.allocated_bytes()
+        self.inner.arena.allocated_bytes()
     }
 
     fn iter<'a>(&self) -> Box<dyn 'a + Iter<Item = &'a [u8]>> {
         Box::new(SkipMapIterator {
             list: self.inner.clone(),
-            node: self.inner.borrow().head.as_ref() as *const Node,
+            node: self.inner.head.as_ref() as *const Node,
             data_: Default::default(),
         })
     }
 }
 
 struct SkipMapIterator<'a> {
-    list: Rc<RefCell<InnerSkipList>>,
+    list: Arc<InnerSkipList>,
     node: *const Node,
     data_: PhantomData<&'a ()>,
 }
@@ -370,7 +375,7 @@ impl<'a> Iter for SkipMapIterator<'a> {
     fn prev(&mut self) -> crate::Result<()> {
         self.is_valid()?;
         unsafe {
-            match self.list.borrow().find_less_than(&(*(*self.node).key))? {
+            match self.list.find_less_than(&(*(*self.node).key))? {
                 None => self.node = std::ptr::null(),
                 Some(node) => self.node = node,
             }
@@ -392,7 +397,7 @@ impl<'a> Iter for SkipMapIterator<'a> {
     }
 
     fn seek(&mut self, target: &[u8]) -> crate::Result<()> {
-        match self.list.borrow().find_greater_or_equal(target)? {
+        match self.list.find_greater_or_equal(target)? {
             None => self.node = std::ptr::null(),
             Some(node) => self.node = node,
         }
@@ -400,11 +405,11 @@ impl<'a> Iter for SkipMapIterator<'a> {
     }
 
     fn seek_to_first(&mut self) {
-        self.node = self.list.borrow().head.next(0)
+        self.node = self.list.head.next(0)
     }
 
     fn seek_to_last(&mut self) {
-        match self.list.borrow().find_last() {
+        match self.list.find_last() {
             None => self.node = std::ptr::null(),
             Some(node) => self.node = node,
         }
@@ -418,10 +423,11 @@ mod tests {
     use crate::skiplist::{InnerSkipList, SkipList};
     use bumpalo::Bump;
     use std::rc::Rc;
+    use std::sync::Arc;
 
     pub fn make_skipmap() -> InnerSkipList {
         let arena = Bump::new();
-        let mut skm = InnerSkipList::new(arena, Rc::new(Box::new(DefaultComparator)));
+        let mut skm = InnerSkipList::new(arena, Arc::new(Box::new(DefaultComparator)));
         let keys = vec![
             "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
             "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",

@@ -9,23 +9,31 @@ use std::cmp::Ordering;
 use std::fmt::{Debug, Display, Formatter};
 use std::marker::PhantomData;
 use std::rc::Rc;
-
+use std::sync::atomic::{AtomicPtr, Ordering as MemoryOrdering};
 const MAX_HEIGHT: usize = 12;
 const BRANCHING_FACTOR: u32 = 4;
 
 #[derive(Debug)]
 struct Node {
     key: *const [u8],
-    skips: *mut Vec<Option<*mut Node>>,
+    skips: *const Vec<AtomicPtr<Node>>,
 }
 
 impl Node {
-    fn next(&self, n: usize) -> Option<*mut Node> {
-        unsafe { (*self.skips)[n] }
+    fn next(&self, n: usize) -> *mut Node {
+        unsafe { (*self.skips)[n].load(MemoryOrdering::Acquire)}
     }
 
-    fn set_next(&mut self, n: usize, node: Option<*mut Node>) {
-        unsafe { (*self.skips)[n] = node }
+    fn set_next(&self, n: usize, node: *mut Node) {
+        unsafe { (*self.skips)[n].store(node, MemoryOrdering::Release) }
+    }
+
+    fn nb_next(&self, n: usize) -> *mut Node {
+        unsafe { (*self.skips)[n].load(MemoryOrdering::Relaxed)}
+    }
+
+    fn nb_set_next(&self, n: usize, node: *mut Node) {
+        unsafe { (*self.skips)[n].store(node, MemoryOrdering::Relaxed) }
     }
 
     fn key(&self) -> &[u8] {
@@ -33,9 +41,6 @@ impl Node {
     }
 }
 
-// impl Debug for InnerSkipList {
-//
-// }
 
 pub struct InnerSkipList {
     cmp: Rc<Box<dyn Comparator>>,
@@ -54,7 +59,7 @@ impl Debug for InnerSkipList {
         loop {
             unsafe {
                 let next = (*current).next(0);
-                if let Some(next) = next {
+                if !next.is_null() {
                     list.entry(&(next), &(*next));
                     current = next;
                 } else {
@@ -74,7 +79,7 @@ impl Display for InnerSkipList {
             let mut current = self.head.as_ref() as *const Node;
             loop {
                 let next = (*current).next(0);
-                if let Some(next) = next {
+                if !next.is_null() {
                     current = next;
                     writeln!(
                         &mut w,
@@ -94,9 +99,13 @@ impl Display for InnerSkipList {
 
 impl InnerSkipList {
     pub fn new(arena: Bump, cmp: Rc<Box<dyn Comparator>>) -> InnerSkipList {
+        let skips = arena.alloc(Vec::with_capacity(MAX_HEIGHT));
+        for _ in 0..MAX_HEIGHT {
+            skips.push(AtomicPtr::default())
+        }
         let head = Box::new(Node {
             key: arena.alloc_slice_copy(&[]),
-            skips: arena.alloc(vec![None; MAX_HEIGHT]),
+            skips,
         });
         InnerSkipList {
             cmp,
@@ -110,9 +119,13 @@ impl InnerSkipList {
 
     fn new_node(&mut self, height: usize, key: &[u8]) -> *mut Node {
         let key = self.arena.alloc_slice_copy(key);
+        let skips = self.arena.alloc(Vec::with_capacity(height));
+        for _ in 0..height {
+            skips.push(AtomicPtr::default())
+        }
         self.arena.alloc(Node {
             key,
-            skips: self.arena.alloc(vec![None; height]),
+            skips,
         })
     }
 
@@ -131,7 +144,7 @@ impl InnerSkipList {
         loop {
             unsafe {
                 let next = (*current).next(level);
-                if let Some(next) = next {
+                if !next.is_null() {
                     match self.cmp.cmp(&(*(*next).key), key)? {
                         Ordering::Less => {
                             current = next;
@@ -168,7 +181,8 @@ impl InnerSkipList {
         let mut level = self.max_height - 1;
         loop {
             unsafe {
-                if let Some(next) = (*current).next(level) {
+                let next = (*current).next(level);
+                if !next.is_null() {
                     if (*next).key() < key {
                         current = next;
                         continue;
@@ -198,7 +212,7 @@ impl InnerSkipList {
         loop {
             unsafe {
                 let next = (*current).next(level);
-                if let Some(next) = next {
+                if !next.is_null() {
                     current = next;
                     continue;
                 }
@@ -219,12 +233,13 @@ impl InnerSkipList {
     }
 
     fn insert(&mut self, key: &[u8]) -> crate::Result<()> {
-        let mut prevs = std::vec![None; MAX_HEIGHT];
+        let mut prevs = std::vec![std::ptr::null_mut(); MAX_HEIGHT];
         let mut current = self.head.as_mut() as *mut Node;
         let mut level = self.max_height - 1;
         loop {
             unsafe {
-                if let Some(next) = (*current).next(level) {
+                let next = (*current).next(level);
+                if !next.is_null() {
                     let ord = self.cmp.cmp(&(*(*next).key), key)?;
 
                     if ord == Ordering::Equal {
@@ -236,7 +251,7 @@ impl InnerSkipList {
                     }
                 }
             }
-            prevs[level] = Some(current);
+            prevs[level] = current;
             if level == 0 {
                 break;
             } else {
@@ -246,19 +261,19 @@ impl InnerSkipList {
 
         let height = self.random_height();
         let current_height = self.max_height;
-        prevs.resize(height, None);
+        prevs.resize(height, std::ptr::null_mut());
         if height > current_height {
             for prev in prevs.iter_mut().skip(current_height) {
-                *prev = Some(self.head.as_mut())
+                *prev = self.head.as_mut()
             }
             self.max_height = height;
         }
 
         current = self.new_node(height, key);
-        for (i, prev) in prevs.iter().flatten().enumerate() {
+        for (i, prev) in prevs.iter().enumerate() {
             unsafe {
-                (*current).set_next(i, (**prev).next(i));
-                (**prev).set_next(i, Some(current));
+                (*current).nb_set_next(i, (**prev).nb_next(i));
+                (**prev).set_next(i, current);
             }
         }
 
@@ -366,10 +381,7 @@ impl<'a> Iter for SkipMapIterator<'a> {
     fn next(&mut self) -> crate::Result<()> {
         self.is_valid()?;
         unsafe {
-            match (*self.node).next(0) {
-                None => self.node = std::ptr::null(),
-                Some(node) => self.node = node,
-            }
+            self.node = (*self.node).next(0)
         }
         Ok(())
     }
@@ -388,10 +400,7 @@ impl<'a> Iter for SkipMapIterator<'a> {
     }
 
     fn seek_to_first(&mut self) {
-        match self.list.borrow().head.next(0) {
-            None => self.node = std::ptr::null(),
-            Some(node) => self.node = node,
-        }
+        self.node = self.list.borrow().head.next(0)
     }
 
     fn seek_to_last(&mut self) {

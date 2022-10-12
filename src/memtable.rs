@@ -9,10 +9,10 @@ pub(crate) struct MemTable {
 
 impl MemTable {
 
-    pub(crate) fn add(&mut self,seq : u64, vtype : ValueType, key: &[u8], value: &[u8]) -> crate::Result<()> {
-        let entry = MemEntry::new(seq,vtype,key, value).encode()?;
-
-    }
+    // pub(crate) fn add(&mut self,seq : u64, vtype : ValueType, key: &[u8], value: &[u8]) -> crate::Result<()> {
+    //     let entry = MemEntry::new(seq,vtype,key, value).encode()?;
+    //
+    // }
 
 
     pub(crate) fn approximate_memory_usage(&self) -> usize {

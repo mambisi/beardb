@@ -12,6 +12,7 @@ mod log;
 mod sst;
 mod metadata;
 mod bloom;
+mod lfu_cache;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

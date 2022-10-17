@@ -137,21 +137,6 @@ mod test {
             self.policy.create_filter(key_slices, &mut self.filter);
             self.keys.clear()
         }
-
-        fn dump_filter(&self) {
-            eprint!("F(");
-            for c in self.filter.iter() {
-                for j in 0..8 {
-                    if ((*c as i32) & (1 << j)) != 0 {
-                        eprint!("{}", '1')
-                    } else {
-                        eprint!("{}", '.')
-                    }
-                }
-            }
-            eprint!(")\n");
-        }
-
         fn matches(&mut self, key: &[u8]) -> bool {
             if !self.keys.is_empty() {
                 self.build();

@@ -17,8 +17,8 @@ pub struct MemEntry<'a> {
 }
 
 impl<'a> MemEntry<'a> {
-    pub(crate) fn new(seq: u64, value_type: ValueType, key: &'a [u8], value: &'a [u8]) -> Self {
-        let seq = seq << 8 | value_type as u64;
+    pub(crate) fn new(seq: u64, vtype: ValueType, key: &'a [u8], value: &'a [u8]) -> Self {
+        let seq = seq << 8 | vtype as u64;
         Self { key, value, tag: seq }
     }
 

@@ -4,11 +4,9 @@ use crate::iter::Iter;
 use bumpalo::Bump;
 use rand::prelude::StdRng;
 use rand::{RngCore, SeedableRng};
-use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::fmt::{Debug, Display, Formatter};
 use std::marker::PhantomData;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering as MemoryOrdering};
 const MAX_HEIGHT: usize = 12;
@@ -150,7 +148,7 @@ impl InnerSkipList {
             unsafe {
                 let next = (*current).next(level);
                 if !next.is_null() {
-                    match self.cmp.cmp(&(*(*next).key), key)? {
+                    match self.cmp.cmp((*next).key(), key)? {
                         Ordering::Less => {
                             current = next;
                             continue;
@@ -245,7 +243,7 @@ impl InnerSkipList {
             unsafe {
                 let next = (*current).next(level);
                 if !next.is_null() {
-                    let ord = self.cmp.cmp(&(*(*next).key), key)?;
+                    let ord = self.cmp.cmp((*next).key(), key)?;
 
                     if ord == Ordering::Equal {
                         return Err(Error::DuplicateEntry);
@@ -275,10 +273,10 @@ impl InnerSkipList {
         }
 
         current = self.new_node(height, key);
-        for (i, prev) in prevs.iter().enumerate() {
+        for (i, prev) in prevs.into_iter().enumerate() {
             unsafe {
-                (*current).nb_set_next(i, (**prev).nb_next(i));
-                (**prev).set_next(i, current);
+                (*current).nb_set_next(i, (*prev).nb_next(i));
+                (*prev).set_next(i, current);
             }
         }
 
@@ -422,7 +420,6 @@ mod tests {
     use crate::iter::Iter;
     use crate::skiplist::{InnerSkipList, SkipList};
     use bumpalo::Bump;
-    use std::rc::Rc;
     use std::sync::Arc;
 
     pub fn make_skipmap() -> InnerSkipList {

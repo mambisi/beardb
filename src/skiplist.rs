@@ -7,8 +7,8 @@ use rand::{RngCore, SeedableRng};
 use std::cmp::Ordering;
 use std::fmt::{Debug, Display, Formatter};
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering as MemoryOrdering};
+use std::sync::Arc;
 const MAX_HEIGHT: usize = 12;
 const BRANCHING_FACTOR: u32 = 4;
 
@@ -20,7 +20,7 @@ struct Node {
 
 impl Node {
     fn next(&self, n: usize) -> *const Node {
-        unsafe { (*self.skips)[n].load(MemoryOrdering::Acquire)}
+        unsafe { (*self.skips)[n].load(MemoryOrdering::Acquire) }
     }
 
     fn set_next(&self, n: usize, node: *const Node) {
@@ -28,7 +28,7 @@ impl Node {
     }
 
     fn nb_next(&self, n: usize) -> *const Node {
-        unsafe { (*self.skips)[n].load(MemoryOrdering::Relaxed)}
+        unsafe { (*self.skips)[n].load(MemoryOrdering::Relaxed) }
     }
 
     fn nb_set_next(&self, n: usize, node: *const Node) {
@@ -39,7 +39,6 @@ impl Node {
         unsafe { &(*self.key) }
     }
 }
-
 
 pub struct InnerSkipList {
     cmp: Arc<Box<dyn Comparator>>,
@@ -120,10 +119,7 @@ impl InnerSkipList {
         for _ in 0..height {
             skips.push(AtomicPtr::default())
         }
-        self.arena.alloc(Node {
-            key,
-            skips,
-        })
+        self.arena.alloc(Node { key, skips })
     }
 
     fn random_height(&self) -> usize {
@@ -138,7 +134,6 @@ impl InnerSkipList {
     fn max_height(&self) -> usize {
         self.max_height.load(MemoryOrdering::Relaxed)
     }
-
 
     fn find_greater_or_equal(&self, key: &[u8]) -> crate::Result<Option<&Node>> {
         let mut current = self.head.as_ref() as *const Node;
@@ -339,7 +334,7 @@ impl SkipList {
         self.inner.arena.allocated_bytes()
     }
 
-    fn iter<'a>(&self) -> Box<dyn 'a + Iter<Item = &'a [u8]>> {
+    pub(crate) fn iter<'a>(&self) -> Box<dyn 'a + Iter<Item = &'a [u8]>> {
         Box::new(SkipMapIterator {
             list: self.inner.clone(),
             node: self.inner.head.as_ref() as *const Node,
@@ -383,9 +378,7 @@ impl<'a> Iter for SkipMapIterator<'a> {
 
     fn next(&mut self) -> crate::Result<()> {
         self.is_valid()?;
-        unsafe {
-            self.node = (*self.node).next(0)
-        }
+        unsafe { self.node = (*self.node).next(0) }
         Ok(())
     }
 

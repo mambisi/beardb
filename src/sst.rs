@@ -1,4 +1,3 @@
 use crate::Error;
 
-pub(crate) struct SSTable {
-}
+pub(crate) struct SSTable {}

@@ -202,13 +202,9 @@ mod test {
                 t.add(&(i.to_le_bytes()))
             }
             t.build();
-            assert!(
-                t.filter_size() < (len * 10 / 8) + 40,"{}", len
-            );
+            assert!(t.filter_size() < (len * 10 / 8) + 40, "{}", len);
             for i in 0..len as i32 {
-                assert!(
-                    t.matches(&(i.to_le_bytes())),"Length {}; key {}", len, i
-                )
+                assert!(t.matches(&(i.to_le_bytes())), "Length {}; key {}", len, i)
             }
 
             let rate = t.false_positive_rate();

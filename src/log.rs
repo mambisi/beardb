@@ -119,7 +119,7 @@ pub struct LogReader<R: Read> {
 impl<R: Read> LogReader<R> {
     pub fn new(src: R, chksum: bool) -> LogReader<R> {
         LogReader {
-            src :  BufReader::new(src),
+            src: BufReader::new(src),
             blk_off: 0,
             blocksize: BLOCK_SIZE,
             checksums: chksum,
@@ -154,8 +154,8 @@ impl<R: Read> LogReader<R> {
 
             self.blk_off += bytes_read;
 
-            checksum = unsafe {(self.head_scratch[0..4].as_ptr() as *const u32).read_unaligned()};
-            length = unsafe {(self.head_scratch[4..6].as_ptr() as *const u16).read_unaligned()};
+            checksum = unsafe { (self.head_scratch[0..4].as_ptr() as *const u32).read_unaligned() };
+            length = unsafe { (self.head_scratch[4..6].as_ptr() as *const u16).read_unaligned() };
             typ = self.head_scratch[6];
 
             dst.resize(dst_offset + length as usize, 0);
@@ -206,9 +206,9 @@ pub fn unmask_crc(mc: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use crate::log::{mask_crc, unmask_crc, LogReader, LogWriter};
     use crate::Error;
-    use crate::log::{LogReader, LogWriter, mask_crc, unmask_crc};
+    use std::io::Cursor;
 
     #[test]
     fn test_crc_mask_crc() {
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_crc_sanity() {
-        assert_eq!(420107693,crc32fast::hash(&[0 as u8; 32]));
+        assert_eq!(420107693, crc32fast::hash(&[0 as u8; 32]));
         assert_eq!(4285311755, crc32fast::hash(&[0xff as u8; 32]));
     }
 
@@ -295,9 +295,11 @@ mod tests {
         lr.blocksize = super::HEADER_SIZE + 10;
         let mut dst = Vec::with_capacity(128);
 
-
         // First record is corrupted.
-        assert_eq!(Err(Error::Corruption("Invalid Checksum".into())), lr.read(&mut dst));
+        assert_eq!(
+            Err(Error::Corruption("Invalid Checksum".into())),
+            lr.read(&mut dst)
+        );
 
         let mut i = 1;
         loop {

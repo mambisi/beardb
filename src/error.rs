@@ -32,7 +32,6 @@ impl PartialEq for Error {
     }
 }
 
-
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Self {
         Self::IOError(format!("{}", err))

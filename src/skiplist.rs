@@ -138,9 +138,8 @@ impl InnerSkipList {
     fn find_greater_or_equal(&self, key: &[u8]) -> crate::Result<Option<&Node>> {
         let mut current = self.head.as_ref() as *const Node;
         let mut level = self.max_height() - 1;
-
-        loop {
-            unsafe {
+        unsafe {
+            loop {
                 let next = (*current).next(level);
                 if !next.is_null() {
                     match self.cmp.cmp((*next).key(), key)? {
@@ -156,14 +155,13 @@ impl InnerSkipList {
                         }
                     }
                 }
-            }
-            if level == 0 {
-                break;
-            }
-            level -= 1;
-        }
 
-        unsafe {
+                if level == 0 {
+                    break;
+                }
+                level -= 1;
+            }
+
             Ok(if current == self.head.as_ref() {
                 None
             } else if (*(*current).key).lt(key) {
@@ -177,8 +175,8 @@ impl InnerSkipList {
     fn find_less_than(&self, key: &[u8]) -> crate::Result<Option<&Node>> {
         let mut current = self.head.as_ref() as *const Node;
         let mut level = self.max_height() - 1;
-        loop {
-            unsafe {
+        unsafe {
+            loop {
                 let next = (*current).next(level);
                 if !next.is_null() {
                     if (*next).key() < key {
@@ -186,13 +184,12 @@ impl InnerSkipList {
                         continue;
                     }
                 }
+
+                if level == 0 {
+                    break;
+                }
+                level -= 1;
             }
-            if level == 0 {
-                break;
-            }
-            level -= 1;
-        }
-        unsafe {
             Ok(if current == self.head.as_ref() {
                 None
             } else if self.cmp.cmp((*current).key(), key)? != Ordering::Less {
@@ -206,22 +203,20 @@ impl InnerSkipList {
     fn find_last(&self) -> Option<&Node> {
         let mut current = self.head.as_ref() as *const Node;
         let mut level = self.max_height() - 1;
-
-        loop {
-            unsafe {
+        unsafe {
+            loop {
                 let next = (*current).next(level);
                 if !next.is_null() {
                     current = next;
                     continue;
                 }
-            }
-            if level == 0 {
-                break;
-            }
-            level -= 1;
-        }
 
-        unsafe {
+                if level == 0 {
+                    break;
+                }
+                level -= 1;
+            }
+
             if current == self.head.as_ref() {
                 None
             } else {
@@ -234,8 +229,8 @@ impl InnerSkipList {
         let mut prevs = std::vec![std::ptr::null(); MAX_HEIGHT];
         let mut current = self.head.as_ref() as *const Node;
         let mut level = self.max_height() - 1;
-        loop {
-            unsafe {
+        unsafe {
+            loop {
                 let next = (*current).next(level);
                 if !next.is_null() {
                     let ord = self.cmp.cmp((*next).key(), key)?;
@@ -248,12 +243,13 @@ impl InnerSkipList {
                         continue;
                     }
                 }
-            }
-            prevs[level] = current;
-            if level == 0 {
-                break;
-            } else {
-                level -= 1;
+
+                prevs[level] = current;
+                if level == 0 {
+                    break;
+                } else {
+                    level -= 1;
+                }
             }
         }
 

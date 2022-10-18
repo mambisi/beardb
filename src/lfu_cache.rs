@@ -68,6 +68,8 @@ impl<K> Drop for Node<K> {
         if let Some(next) = self.next.as_ref() {
             next.as_ref().borrow_mut().prev = self.prev.clone()
         }
+        drop(self.freq_count);
+        drop(self.items.);
     }
 }
 
@@ -202,7 +204,7 @@ where
         Ok(())
     }
 
-    fn evict(&mut self) -> Vec<(K, V)> {
+    fn prune(&mut self) -> Vec<(K, V)> {
         if self.items.len() <= self.options.max_capacity {
             return Vec::new();
         }
@@ -228,21 +230,12 @@ where
             if next_node.as_ref().borrow().items.is_empty() {
                 Self::delete_node(next_node.clone());
             }
-            println!(
-                "{} Rc::strong_count {}",
-                next_node.as_ref().borrow().freq_count,
-                Rc::strong_count(&next_node)
-            );
-            println!(
-                "{} Rc::weak_count {}",
-                next_node.as_ref().borrow().freq_count,
-                Rc::weak_count(&next_node)
-            );
             node = next_node.as_ref().borrow().next.clone()
         }
         removed
     }
 
+    #[cfg(test)]
     fn flatten(&self) -> BTreeMap<usize, HashSet<Rc<K>>> {
         let mut map = BTreeMap::new();
         let mut node = self.head.as_ref().borrow().next.clone();
@@ -271,44 +264,5 @@ impl<K: Debug, V: Debug> Debug for LFUCache<K, V> {
 
 #[cfg(test)]
 mod test {
-    use crate::lfu_cache::{LFUCache, LFUCacheOptions};
-    use std::collections::BTreeMap;
-    use std::time::Duration;
 
-    #[test]
-    fn basic_insertions() {
-        let mut cache = LFUCache::new();
-        cache.insert(1, 10).unwrap();
-        cache.insert(2, 20).unwrap();
-        cache.insert(3, 30).unwrap();
-        cache.insert(4, 40).unwrap();
-        println!("{:#?}", cache);
-        cache.get(&2);
-        cache.get(&2);
-        cache.get(&3);
-        cache.get(&3);
-        cache.get(&1);
-        cache.get(&1);
-        cache.get(&1);
-        println!("{:?}", cache);
-    }
-
-    #[test]
-    fn basic_insertions_with_eviction() {
-        let mut cache = LFUCache::with_options(LFUCacheOptions {
-            min_frequency: 1,
-            max_capacity: 2,
-        });
-        for i in 1..999999 {
-            cache.insert(i, i).unwrap();
-        }
-    }
-
-    #[test]
-    fn basic_insertions_with_map() {
-        let mut cache = BTreeMap::new();
-        for i in 1..999999 {
-            cache.insert(i, i);
-        }
-    }
 }

@@ -106,7 +106,7 @@ impl<'a> TableIndexReader<'a> {
         opts: Arc<TableOptions>,
     ) -> crate::Result<TableIndexReader<'a>> {
         let inner = rkyv::check_archived_root::<TableIndex>(data)
-            .map_err(|err| Error::AnyError(Box::new(err)))?;
+            .map_err(|err| Error::Corruption(format!("{}", err)))?;
         Ok(Self { inner, opts })
     }
 

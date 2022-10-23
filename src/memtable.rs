@@ -24,12 +24,12 @@ impl MemTable {
 
     pub(crate) fn get(&self, key: &[u8]) -> crate::Result<Option<&[u8]>> {
         let mut iter = self.table.iter();
-        iter.seek(key)?;
+        iter.seek(key);
 
         if !iter.valid() {
             return Ok(None);
         }
-        if let Some(raw_memkey) = iter.current()? {
+        if let Some(raw_memkey) = iter.current() {
             let memkey = MemEntry::decode_from_slice(raw_memkey)?;
             if memkey.key().cmp(key) == Ordering::Equal {
                 return match memkey.value_type() {

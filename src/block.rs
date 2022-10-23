@@ -1,24 +1,21 @@
-use crate::bloom::BloomFilterPolicy;
 use crate::codec::decode_fixed32;
-use crate::constant::*;
-use crate::table::{decode_key, decode_key_value, TableOptions};
+use crate::constant::{BLOCK_ENTRY_HEADER_SIZE, BLOCK_META_SIZE, CHECKSUM_SIZE};
+use crate::iter::Iter;
+use crate::table::{decode_key, decode_key_value};
 use crate::table_index::BlockIndex;
-use crate::{bloom, table_index};
-use bumpalo::Bump;
+use crate::Error;
 use std::io::Write;
-use std::rc::Rc;
-use std::sync::Arc;
 
 #[derive(Debug)]
 pub(crate) struct Block<'a> {
-    pub(crate) index: BlockIndex<'a>,
+    pub(crate) block_offset: usize,
     pub(crate) data: &'a [u8],
     pub(crate) entry_offsets: Vec<usize>,
     pub(crate) checksum: u32,
 }
 
 impl<'a> Block<'a> {
-    pub(crate) fn open(index: BlockIndex<'a>, data: &'a [u8]) -> Self {
+    pub(crate) fn open(block_offset: usize, data: &'a [u8]) -> Self {
         let checksum = decode_fixed32(&data[data.len() - CHECKSUM_SIZE..data.len()]);
         let block_meta_size = decode_fixed32(
             &data[data.len() - CHECKSUM_SIZE - BLOCK_META_SIZE..data.len() - CHECKSUM_SIZE],
@@ -32,7 +29,7 @@ impl<'a> Block<'a> {
             .map(|k| decode_fixed32(k) as usize)
             .collect();
         Self {
-            index,
+            block_offset,
             data,
             entry_offsets,
             checksum,
@@ -65,12 +62,90 @@ impl<'a> Block<'a> {
     }
 
     pub(crate) fn get_value_offset_abs(&'a self, key: &[u8]) -> Option<(usize, usize)> {
-        self.get_value_offset(key).map(|(start, end)| {
-            (
-                start + self.index.offset_start,
-                end + self.index.offset_start,
-            )
-        })
+        self.get_value_offset(key)
+            .map(|(start, end)| (start + self.block_offset, end + self.block_offset))
+    }
+
+    pub(crate) fn size(&self) -> usize {
+        self.entry_offsets.len()
+    }
+
+    pub(crate) fn into_iter(self) -> BlockIterator<'a> {
+        let cursor = 0;
+        let entry_offset = self.entry_offsets[cursor as usize];
+        let item = Some(decode_key_value(&self.data[entry_offset..]));
+        BlockIterator {
+            cursor,
+            block: self,
+            item,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct BlockIterator<'a> {
+    cursor: isize,
+    block: Block<'a>,
+    item: Option<(&'a [u8], &'a [u8])>,
+}
+impl<'a> BlockIterator<'a> {
+    fn reset(&mut self) {
+        self.item = self
+            .block
+            .entry_offsets
+            .get(self.cursor as usize)
+            .map(|entry_offset| decode_key_value(&self.block.data[*entry_offset..]));
+    }
+}
+impl<'a> Iter for BlockIterator<'a> {
+    type Item = (&'a [u8], &'a [u8]);
+
+    fn valid(&self) -> bool {
+        if self.cursor < 0 || self.cursor > self.block.entry_offsets.len() as isize - 1 {
+            return false;
+        }
+        true
+    }
+
+    fn prev(&mut self) {
+        if !self.valid() {
+            return;
+        }
+        self.reset();
+        self.cursor -= 1;
+    }
+
+    fn next(&mut self) {
+        if !self.valid() {
+            return;
+        }
+        self.reset();
+        self.cursor += 1;
+    }
+
+    fn current(&self) -> Option<Self::Item> {
+        self.item
+    }
+
+    fn seek(&mut self, target: &[u8]) {
+        self.cursor = match self.block.entry_offsets.binary_search_by(|entry_offset| {
+            let entry_key = decode_key(&self.block.data[*entry_offset..]);
+            entry_key.cmp(target)
+        }) {
+            Ok(index) => index as isize,
+            Err(index) => index as isize,
+        };
+        self.reset();
+    }
+
+    fn seek_to_first(&mut self) {
+        self.cursor = (*self.block.entry_offsets.first().unwrap_or(&0)) as isize;
+        self.reset();
+    }
+
+    fn seek_to_last(&mut self) {
+        self.cursor = (*self.block.entry_offsets.last().unwrap_or(&0)) as isize;
+        self.reset();
     }
 }
 

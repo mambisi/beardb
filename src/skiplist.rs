@@ -358,37 +358,40 @@ impl<'a> Iter for SkipMapIterator<'a> {
     type Item = &'a [u8];
 
     fn valid(&self) -> bool {
-        self.is_valid().is_ok()
+        !self.node.is_null()
     }
 
-    fn prev(&mut self) -> crate::Result<()> {
-        self.is_valid()?;
+    fn prev(&mut self) {
+        if !self.valid() {
+            return;
+        }
         unsafe {
-            match self.list.find_less_than(&(*(*self.node).key))? {
-                None => self.node = std::ptr::null(),
-                Some(node) => self.node = node,
+            match self.list.find_less_than(&(*(*self.node).key)) {
+                Ok(Some(node)) => self.node = node,
+                _ => self.node = std::ptr::null(),
             }
         }
-        Ok(())
     }
 
-    fn next(&mut self) -> crate::Result<()> {
-        self.is_valid()?;
-        unsafe { self.node = (*self.node).next(0) }
-        Ok(())
-    }
-
-    fn current(&self) -> crate::Result<Option<Self::Item>> {
-        self.is_valid()?;
-        unsafe { Ok(Some(&(*(*self.node).key))) }
-    }
-
-    fn seek(&mut self, target: &[u8]) -> crate::Result<()> {
-        match self.list.find_greater_or_equal(target)? {
-            None => self.node = std::ptr::null(),
-            Some(node) => self.node = node,
+    fn next(&mut self) {
+        if !self.valid() {
+            return;
         }
-        Ok(())
+        unsafe { self.node = (*self.node).next(0) }
+    }
+
+    fn current(&self) -> Option<Self::Item> {
+        if !self.valid() {
+            return None;
+        }
+        unsafe { Some(&(*(*self.node).key)) }
+    }
+
+    fn seek(&mut self, target: &[u8]) {
+        match self.list.find_greater_or_equal(target) {
+            Ok(Some(node)) => self.node = node,
+            _ => self.node = std::ptr::null(),
+        }
     }
 
     fn seek_to_first(&mut self) {
@@ -523,7 +526,7 @@ mod tests {
     fn test_skipmap_iterator_seek_valid() {
         let skm = make_skipmap_t();
         let mut iter = skm.iter();
-        assert!(iter.next().is_ok());
+        iter.next();
         assert!(iter.valid());
         assert_eq!(current_key_val(&iter).unwrap(), "aba".as_bytes());
         iter.seek(&"abz".as_bytes());
@@ -534,19 +537,18 @@ mod tests {
 
         iter.seek(&"".as_bytes());
         assert!(iter.valid());
-        assert!(iter.prev().is_ok());
+        iter.prev();
         assert!(!iter.valid());
 
-        while iter.next().is_ok() {}
+        while iter.valid() {
+            iter.next()
+        }
         assert!(!iter.valid());
-        assert!(iter.prev().is_err());
+        iter.prev();
         assert_eq!(current_key_val(&iter), None);
     }
 
     fn current_key_val<'a>(iter: &'a Box<dyn 'a + Iter<Item = &[u8]>>) -> Option<&'a [u8]> {
-        return match iter.current() {
-            Ok(Some(t)) => Some(t),
-            _ => None,
-        };
+        iter.current()
     }
 }

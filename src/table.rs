@@ -11,7 +11,6 @@ use std::sync::Arc;
 pub(crate) fn decode_key(data: &[u8]) -> &[u8] {
     //TODO: Handle index errors
     let key_size = decode_fixed32(&data[..4]) as usize;
-    println!("key_size {}", key_size);
     &data[BLOCK_ENTRY_HEADER_SIZE..BLOCK_ENTRY_HEADER_SIZE + key_size]
 }
 
@@ -19,7 +18,6 @@ pub(crate) fn decode_key_value(data: &[u8]) -> (&[u8], &[u8]) {
     //TODO: Handle index errors
     let key_size = decode_fixed32(&data[..4]) as usize;
     let value_size = decode_fixed32(&data[4..8]) as usize;
-    println!("key_size {} value_size {}", key_size, value_size);
     let key = &data[BLOCK_ENTRY_HEADER_SIZE..BLOCK_ENTRY_HEADER_SIZE + key_size];
     let value =
         &data[BLOCK_ENTRY_HEADER_SIZE + key_size..BLOCK_ENTRY_HEADER_SIZE + key_size + value_size];
@@ -74,31 +72,43 @@ impl Table {
         }
     }
 
-    fn index(&self) -> TableIndexReader {
+    fn index(&self) -> crate::Result<TableIndexReader> {
         TableIndexReader::open(
             &self.file[self.index_start..(self.index_start + self.index_len)],
             self.opts.clone(),
         )
     }
 
-    fn get(&self, key: &[u8]) -> Option<&[u8]> {
-        let index = self.index();
-        let block_index = match index.find_key_block(key) {
-            None => return None,
+    fn get_block(&self, index: usize) -> crate::Result<Option<Block>> {
+        let index_reader = self.index()?;
+        let block_index = match index_reader.get_block_index(index) {
+            None => return Ok(None),
             Some(index) => index,
         };
         let raw_block = &self.file[block_index.offset_start..block_index.offset_end];
-        let block = Block::open(block_index, raw_block);
+        let block = Block::open(block_index.offset_start, raw_block);
+        return Ok(Some(block));
+    }
+
+    fn get(&self, key: &[u8]) -> crate::Result<Option<&[u8]>> {
+        let index = self.index()?;
+        let block_index = match index.find_key_block(key) {
+            None => return Ok(None),
+            Some(index) => index,
+        };
+        let raw_block = &self.file[block_index.offset_start..block_index.offset_end];
+        let block = Block::open(block_index.offset_start, raw_block);
         if let Some((start, end)) = block.get_value_offset_abs(key) {
-            return Some(&self.file[start..end]);
+            return Ok(Some(&self.file[start..end]));
         }
-        return None;
+        return Ok(None);
     }
 }
 
 #[cfg(test)]
 mod test {
     use crate::bloom::BloomFilterPolicy;
+    use crate::iter::Iter;
     use crate::table::{Table, TableOptions};
     use crate::table_builder::TableBuilder;
     use core::slice::SlicePattern;
@@ -138,7 +148,7 @@ mod test {
 
         let data = unsafe { Mmap::map(&file).unwrap() };
         let table = Table::open(12, data, opts.clone());
-        let index = table.index();
+        let index = table.index().unwrap();
         println!("block index {:?}", index.find_key_block(&[97, 98, 113]));
         println!("---------------------------------------------------------------");
         println!("block index {:?}", index.find_key_block(b"abr"));
@@ -148,5 +158,62 @@ mod test {
         println!("Value {:?}", table.get(b"aba"));
         println!("---------------------------------------------------------------");
         println!("block index {:?}", index.find_key_block(b"zzz"));
+
+        println!("---------------------------------------------------------------");
+        let block = table.get_block(0).unwrap().unwrap();
+        println!("iter block {:?}", block);
+        let mut block_iter = block.into_iter();
+        while block_iter.valid() {
+            block_iter.next();
+            println!("{:?}", block_iter.current())
+        }
+    }
+
+    fn table_opts_mid() -> Arc<TableOptions> {
+        Arc::new(TableOptions {
+            block_size: 11 * 20,
+            table_size: 2 << 20,
+            table_capacity: ((2_u64 << 20_u64) as f64 / 0.9) as usize,
+            policy: BloomFilterPolicy::new(10),
+        })
+    }
+
+    #[test]
+    fn basic_test_iter_data() {
+        let mut file = tempfile().unwrap();
+        //let mut dst = unsafe { MmapMut::map_mut(&file).unwrap() };
+        let data = vec![
+            "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
+            "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",
+            "aby", "abz",
+        ];
+
+        let opts = table_opts_mid();
+        let mut table = TableBuilder::new_with_options(&mut file, opts.clone());
+
+        for item in data {
+            table.add(item.as_bytes(), item.as_bytes()).unwrap();
+        }
+
+        table.finish().unwrap();
+        //file.sync_all().unwrap();
+
+        let data = unsafe { Mmap::map(&file).unwrap() };
+        let table = Table::open(12, data, opts.clone());
+        println!("---------------------------------------------------------------");
+        let block = table.get_block(0).unwrap().unwrap();
+        println!("iter block {:?}", block.size());
+        let mut block_iter = block.into_iter();
+        assert!(block_iter.valid());
+        block_iter.next();
+        println!("{:?}", block_iter.current());
+
+        block_iter.next();
+        println!("{:?}", block_iter.seek(&[97, 98, 103]));
+
+        while block_iter.valid() {
+            block_iter.next();
+            println!("{:?}", block_iter.current())
+        }
     }
 }

@@ -1,7 +1,5 @@
 use crate::codec::decode_fixed32;
-use std::collections::VecDeque;
 use std::io::Write;
-use std::ops::Mul;
 
 fn hash(data: &[u8], seed: u32) -> u32 {
     let m: u32 = 0xc6a4a793;
@@ -47,7 +45,7 @@ pub(crate) fn bloom_hash(data: &[u8]) -> u32 {
 
 impl BloomFilterPolicy {
     pub(crate) fn new(bit_per_key: usize) -> Self {
-        let k = (bit_per_key as f64).mul(0.69) as usize;
+        let k = ((bit_per_key as f64) * 0.69) as usize;
         Self { bit_per_key, k }
     }
 

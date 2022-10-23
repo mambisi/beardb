@@ -1,4 +1,4 @@
-use crate::block::Block;
+use crate::block::{Block, BlockIterator};
 use crate::bloom::BloomFilterPolicy;
 use crate::codec::decode_fixed32;
 use crate::constant::BLOCK_ENTRY_HEADER_SIZE;
@@ -7,6 +7,8 @@ use crate::{codec, Error};
 use core::slice::SlicePattern;
 use memmap2::Mmap;
 use std::sync::Arc;
+use std::thread::current;
+use crate::iter::Iter;
 
 pub(crate) fn decode_key(data: &[u8]) -> &[u8] {
     //TODO: Handle index errors
@@ -49,22 +51,22 @@ impl Default for TableOptions {
     }
 }
 
-pub(crate) struct Table {
-    file: Mmap,
+pub(crate) struct InnerTable {
+    data: Mmap,
     id: u64,
     index_start: usize,
     index_len: usize,
     opts: Arc<TableOptions>,
 }
 
-impl Table {
-    fn open(id: u64, file: Mmap, opts: Arc<TableOptions>) -> Table {
+impl InnerTable {
+    fn open(id: u64, file: Mmap, opts: Arc<TableOptions>) -> InnerTable {
         let s = &file[file.as_slice().len() - 8..file.as_slice().len() - 4];
         let index_len = codec::decode_fixed32(s) as usize;
         let index_start = file.as_slice().len() - index_len - 8;
 
-        Table {
-            file,
+        InnerTable {
+            data: file,
             id,
             index_start,
             index_len,
@@ -74,7 +76,7 @@ impl Table {
 
     fn index(&self) -> crate::Result<TableIndexReader> {
         TableIndexReader::open(
-            &self.file[self.index_start..(self.index_start + self.index_len)],
+            &self.data[self.index_start..(self.index_start + self.index_len)],
             self.opts.clone(),
         )
     }
@@ -85,7 +87,7 @@ impl Table {
             None => return Ok(None),
             Some(index) => index,
         };
-        let raw_block = &self.file[block_index.offset_start..block_index.offset_end];
+        let raw_block = &self.data[block_index.offset_start..block_index.offset_end];
         let block = Block::open(block_index.offset_start, raw_block);
         return Ok(Some(block));
     }
@@ -96,12 +98,111 @@ impl Table {
             None => return Ok(None),
             Some(index) => index,
         };
-        let raw_block = &self.file[block_index.offset_start..block_index.offset_end];
+        let raw_block = &self.data[block_index.offset_start..block_index.offset_end];
         let block = Block::open(block_index.offset_start, raw_block);
         if let Some((start, end)) = block.get_value_offset_abs(key) {
-            return Ok(Some(&self.file[start..end]));
+            return Ok(Some(&self.data[start..end]));
         }
         return Ok(None);
+    }
+}
+
+
+pub(crate) struct Table {
+    inner : InnerTable
+}
+
+impl Table {
+    fn open(id: u64, file: Mmap, opts: Arc<TableOptions>) -> Self {
+        Self {
+            inner: InnerTable::open(id,file,opts)
+        }
+    }
+
+    fn index(&self) -> crate::Result<TableIndexReader> {
+        self.inner.index()
+    }
+
+    fn get_block(&self, index: usize) -> crate::Result<Option<Block>> {
+        self.inner.get_block(index)
+    }
+
+    fn get(&self, key: &[u8]) -> crate::Result<Option<&[u8]>> {
+        self.inner.get(key)
+    }
+}
+
+
+
+pub(crate) struct TableIterator<'a> {
+    cursor : isize,
+    table: Arc<InnerTable>,
+    current : Box<BlockIterator<'a>>,
+    error : Option<Error>
+}
+
+
+impl<'a> TableIterator<'a> {
+    fn set_current(&'a mut self, index : BlockIndex) {
+
+    }
+
+    fn index(&'a self) -> crate::Result<TableIndexReader<'a>> {
+        TableIndexReader::open(
+            &self.table.data[self.table.index_start..(self.table.index_start + self.table.index_len)],
+            self.table.opts.clone(),
+        )
+    }
+
+}
+
+impl<'a> Iter for TableIterator<'a> {
+    type Item = (Vec<u8>, Vec<u8>);
+
+    fn valid(&self) -> bool {
+        todo!()
+    }
+
+    fn prev(&mut self) {
+        todo!()
+    }
+
+    fn next(&mut self) {
+        if !self.current.valid() {
+
+        }
+        self.current.next();
+        todo!()
+    }
+
+    fn current(&self) -> Option<Self::Item> {
+        todo!()
+    }
+
+    fn seek(&mut self, target: &[u8]) {
+        let index = match self.index(){
+            Ok(index) => {
+                index
+            }
+            Err(err) => {
+                self.error = Some(err);
+                return;
+            }
+        };
+        let block_index = index.find_target_key_block(target);
+        let raw_block = &self.table.data[block_index.offset_start..block_index.offset_end];
+        let block = Block::open(block_index.offset_start, raw_block);
+        let mut block_iter = block.into_iter();
+        block_iter.seek(target);
+        self.current = Box::new(block_iter);
+    }
+
+    fn seek_to_first(&mut self) {
+        todo!()
+    }
+
+    fn seek_to_last(&mut self) {
+        todo!()
     }
 }
 
@@ -109,7 +210,7 @@ impl Table {
 mod test {
     use crate::bloom::BloomFilterPolicy;
     use crate::iter::Iter;
-    use crate::table::{Table, TableOptions};
+    use crate::table::{InnerTable, TableOptions};
     use crate::table_builder::TableBuilder;
     use core::slice::SlicePattern;
     use memmap2::{Mmap, MmapMut};
@@ -147,7 +248,7 @@ mod test {
         //file.sync_all().unwrap();
 
         let data = unsafe { Mmap::map(&file).unwrap() };
-        let table = Table::open(12, data, opts.clone());
+        let table = InnerTable::open(12, data, opts.clone());
         let index = table.index().unwrap();
         println!("block index {:?}", index.find_key_block(&[97, 98, 113]));
         println!("---------------------------------------------------------------");
@@ -199,7 +300,7 @@ mod test {
         //file.sync_all().unwrap();
 
         let data = unsafe { Mmap::map(&file).unwrap() };
-        let table = Table::open(12, data, opts.clone());
+        let table = InnerTable::open(12, data, opts.clone());
         println!("---------------------------------------------------------------");
         let block = table.get_block(0).unwrap().unwrap();
         println!("iter block {:?}", block.size());
@@ -209,7 +310,7 @@ mod test {
         println!("{:?}", block_iter.current());
 
         block_iter.next();
-        println!("{:?}", block_iter.seek(&[97, 98, 103]));
+        block_iter.seek(&[97, 98, 103]);
 
         while block_iter.valid() {
             block_iter.next();

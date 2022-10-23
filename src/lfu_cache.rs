@@ -68,7 +68,6 @@ impl<K> Drop for Node<K> {
         if let Some(next) = self.next.as_ref() {
             next.as_ref().borrow_mut().prev = self.prev.clone()
         }
-        drop(self.freq_count);
     }
 }
 
@@ -144,11 +143,7 @@ where
             return None;
         };
 
-        let tmp = if let Some(tmp) = self.items.get_mut(&key) {
-            tmp
-        } else {
-            return None;
-        };
+        let tmp =  self.items.get_mut(&key)?;
 
         let mut freq = tmp.parent.clone();
         let next_freq = tmp.parent.as_ref().borrow_mut().next.clone();

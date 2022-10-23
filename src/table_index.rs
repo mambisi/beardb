@@ -111,15 +111,14 @@ impl<'a> TableIndexReader<'a> {
     }
 
     pub(crate) fn get_block_index(&self, at: usize) -> Option<BlockIndex> {
-        match self.inner.offsets.get(at) {
-            Some(index) => Some(BlockIndex {
+        self.inner.offsets.get(at).map(|index| {
+            BlockIndex {
                 base_key: index.base_key.as_slice(),
                 bloomfilter: index.filter.as_slice(),
                 offset_start: index.offset_start as usize,
                 offset_end: index.offset_end as usize,
-            }),
-            _ => None,
-        }
+            }
+        })
     }
 
     pub(crate) fn iter(&self) -> TableIndexIterator {
@@ -152,6 +151,21 @@ impl<'a> TableIndexReader<'a> {
             return Some(block_index);
         }
         return None;
+    }
+
+    pub(crate) fn find_target_key_block(&self, target_key: &[u8]) -> BlockIndex {
+        let pos = self
+            .inner
+            .offsets
+            .partition_point(|t| target_key.ge(t.base_key.as_slice()));
+        let index = &self.inner.offsets[pos - 1];
+        let block_index: BlockIndex = BlockIndex {
+            base_key: index.base_key.as_slice(),
+            bloomfilter: index.filter.as_slice(),
+            offset_start: index.offset_start as usize,
+            offset_end: index.offset_end as usize,
+        };
+        block_index
     }
 
     pub(crate) fn contains_key(&self, key: &[u8]) -> bool {

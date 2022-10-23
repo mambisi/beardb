@@ -162,9 +162,7 @@ impl InnerSkipList {
                 level -= 1;
             }
 
-            Ok(if current == self.head.as_ref() {
-                None
-            } else if (*(*current).key).lt(key) {
+            Ok(if current == self.head.as_ref() || (*(*current).key).lt(key) {
                 None
             } else {
                 current.as_ref()
@@ -190,9 +188,7 @@ impl InnerSkipList {
                 }
                 level -= 1;
             }
-            Ok(if current == self.head.as_ref() {
-                None
-            } else if self.cmp.cmp((*current).key(), key)? != Ordering::Less {
+            Ok(if current == self.head.as_ref() || self.cmp.cmp((*current).key(), key)? != Ordering::Less{
                 None
             } else {
                 current.as_ref()
@@ -330,7 +326,7 @@ impl SkipList {
         self.inner.arena.allocated_bytes()
     }
 
-    pub(crate) fn iter<'a>(&self) -> Box<dyn 'a + Iter<Item = &'a [u8]>> {
+    pub(crate) fn iter<'a>(&'a self) -> Box<dyn 'a + Iter<Item = &'a [u8]>> {
         Box::new(SkipMapIterator {
             list: self.inner.clone(),
             node: self.inner.head.as_ref() as *const Node,

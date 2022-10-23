@@ -2,8 +2,6 @@ use crate::codec::decode_fixed32;
 use crate::constant::{BLOCK_ENTRY_HEADER_SIZE, BLOCK_META_SIZE, CHECKSUM_SIZE};
 use crate::iter::Iter;
 use crate::table::{decode_key, decode_key_value};
-use crate::table_index::BlockIndex;
-use crate::Error;
 use std::io::Write;
 
 #[derive(Debug)]

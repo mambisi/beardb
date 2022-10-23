@@ -69,7 +69,6 @@ impl<K> Drop for Node<K> {
             next.as_ref().borrow_mut().prev = self.prev.clone()
         }
         drop(self.freq_count);
-        drop(self.items.);
     }
 }
 

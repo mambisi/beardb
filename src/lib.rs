@@ -1,3 +1,6 @@
+#![feature(slice_pattern)]
+extern crate core;
+
 use crate::error::Error;
 
 mod bloom;
@@ -10,8 +13,12 @@ mod log;
 mod memtable;
 mod metadata;
 mod skiplist;
-mod sst;
+mod table;
 mod types;
+mod block;
+mod table_index;
+mod constant;
+mod table_builder;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

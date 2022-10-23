@@ -1,5 +1,6 @@
 use crate::codec::decode_fixed32;
 use std::collections::VecDeque;
+use std::io::Write;
 use std::ops::Mul;
 
 fn hash(data: &[u8], seed: u32) -> u32 {
@@ -34,12 +35,13 @@ fn hash(data: &[u8], seed: u32) -> u32 {
     h
 }
 
+#[derive(Debug)]
 pub(crate) struct BloomFilterPolicy {
     bit_per_key: usize,
     k: usize,
 }
 
-fn bloom_hash(data: &[u8]) -> u32 {
+pub(crate) fn bloom_hash(data: &[u8]) -> u32 {
     hash(data, 0xbc9f1d34)
 }
 
@@ -73,6 +75,32 @@ impl BloomFilterPolicy {
                 h = h.overflowing_add(delta).0;
             }
         }
+    }
+
+    pub(crate) fn create_filter_from_hashes(&self, hashes: &[u32]) -> Vec<u8>{
+
+        let mut bits = hashes.as_ref().len() * self.bit_per_key;
+        if bits < 64 {
+            bits = 64;
+        }
+        let bytes = (bits + 7) / 8;
+        bits = bytes * 8;
+        let mut dst  = vec![0; bytes];
+        dst.push(self.k as u8);
+
+        let array = &mut dst[0..];
+        for key_hash in hashes {
+            // Use double-hashing to generate a sequence of hash values.
+            // See analysis in [Kirsch,Mitzenmacher 2006].
+            let mut h = *key_hash;
+            let delta = (h >> 17) | (h << 15);
+            for _ in 0..self.k {
+                let bitpos = h % (bits as u32);
+                array[(bitpos / 8) as usize] |= 1 << (bitpos % 8);
+                h = h.overflowing_add(delta).0;
+            }
+        }
+        dst
     }
 
     pub(crate) fn key_and_match(&self, key: &[u8], bloom_filter: &[u8]) -> bool {

@@ -262,6 +262,4 @@ impl<K: Debug, V: Debug> Debug for LFUCache<K, V> {
 }
 
 #[cfg(test)]
-mod test {
-
-}
+mod test {}

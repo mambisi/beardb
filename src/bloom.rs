@@ -77,15 +77,14 @@ impl BloomFilterPolicy {
         }
     }
 
-    pub(crate) fn create_filter_from_hashes(&self, hashes: &[u32]) -> Vec<u8>{
-
+    pub(crate) fn create_filter_from_hashes(&self, hashes: &[u32]) -> Vec<u8> {
         let mut bits = hashes.as_ref().len() * self.bit_per_key;
         if bits < 64 {
             bits = 64;
         }
         let bytes = (bits + 7) / 8;
         bits = bytes * 8;
-        let mut dst  = vec![0; bytes];
+        let mut dst = vec![0; bytes];
         dst.push(self.k as u8);
 
         let array = &mut dst[0..];

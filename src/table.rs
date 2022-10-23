@@ -1,29 +1,29 @@
+use crate::block::Block;
 use crate::bloom::BloomFilterPolicy;
+use crate::codec::decode_fixed32;
+use crate::constant::BLOCK_ENTRY_HEADER_SIZE;
 use crate::table_index::{BlockIndex, TableIndexReader};
 use crate::{codec, Error};
 use core::slice::SlicePattern;
 use memmap2::Mmap;
 use std::sync::Arc;
-use crate::block::Block;
-use crate::codec::decode_fixed32;
-use crate::constant::BLOCK_ENTRY_HEADER_SIZE;
 
-
-pub(crate) fn decode_key(data : &[u8]) -> &[u8] {
+pub(crate) fn decode_key(data: &[u8]) -> &[u8] {
     //TODO: Handle index errors
     let key_size = decode_fixed32(&data[..4]) as usize;
     println!("key_size {}", key_size);
     &data[BLOCK_ENTRY_HEADER_SIZE..BLOCK_ENTRY_HEADER_SIZE + key_size]
 }
 
-pub(crate) fn decode_key_value(data : &[u8]) -> (&[u8],&[u8]) {
+pub(crate) fn decode_key_value(data: &[u8]) -> (&[u8], &[u8]) {
     //TODO: Handle index errors
     let key_size = decode_fixed32(&data[..4]) as usize;
     let value_size = decode_fixed32(&data[4..8]) as usize;
     println!("key_size {} value_size {}", key_size, value_size);
     let key = &data[BLOCK_ENTRY_HEADER_SIZE..BLOCK_ENTRY_HEADER_SIZE + key_size];
-    let value = &data[BLOCK_ENTRY_HEADER_SIZE + key_size..BLOCK_ENTRY_HEADER_SIZE + key_size + value_size];
-    (key,value)
+    let value =
+        &data[BLOCK_ENTRY_HEADER_SIZE + key_size..BLOCK_ENTRY_HEADER_SIZE + key_size + value_size];
+    (key, value)
 }
 
 pub(crate) enum CompressionType {
@@ -75,7 +75,7 @@ impl Table {
     }
 
     fn index(&self) -> TableIndexReader {
-        TableIndexReader::new_from_slice(
+        TableIndexReader::open(
             &self.file[self.index_start..(self.index_start + self.index_len)],
             self.opts.clone(),
         )
@@ -89,10 +89,10 @@ impl Table {
         };
         let raw_block = &self.file[block_index.offset_start..block_index.offset_end];
         let block = Block::open(block_index, raw_block);
-        if let Some((start,end)) = block.get_value_offset_abs(key) {
-            return Some(&self.file[start..end])
+        if let Some((start, end)) = block.get_value_offset_abs(key) {
+            return Some(&self.file[start..end]);
         }
-        return None
+        return None;
     }
 }
 
@@ -134,7 +134,7 @@ mod test {
         }
 
         table.finish().unwrap();
-        file.sync_all().unwrap();
+        //file.sync_all().unwrap();
 
         let data = unsafe { Mmap::map(&file).unwrap() };
         let table = Table::open(12, data, opts.clone());
@@ -146,7 +146,6 @@ mod test {
         println!("---------------------------------------------------------------");
         println!("block index {:?}", index.find_key_block(b"aba"));
         println!("Value {:?}", table.get(b"aba"));
-
         println!("---------------------------------------------------------------");
         println!("block index {:?}", index.find_key_block(b"zzz"));
     }

@@ -52,7 +52,6 @@ where
                     .create_filter_from_hashes(self.current.key_hashes.as_slice()),
             );
             self.blocks_offset += self.current.finish(&mut self.blocks)? as u32;
-            self.current = BlockBuilder::new();
         }
         self.add_internal(key, value)
     }
@@ -127,6 +126,7 @@ mod test {
             block_size: 11 * 5,
             table_size: 2 << 20,
             table_capacity: ((2_u64 << 20_u64) as f64 / 0.9) as usize,
+            checksum: false,
             policy: BloomFilterPolicy::new(10),
         })
     }

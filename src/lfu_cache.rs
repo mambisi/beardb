@@ -1,10 +1,10 @@
-use libc::srand;
 use std::borrow::{Borrow, BorrowMut};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::rc::Rc;
+use indexmap::IndexSet;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -22,7 +22,7 @@ pub enum CacheError {
 #[derive(Debug, Clone)]
 struct Node<K> {
     freq_count: usize,
-    items: HashSet<Rc<K>>,
+    items: IndexSet<Rc<K>>,
     prev: Option<Rc<RefCell<Node<K>>>>,
     next: Option<Rc<RefCell<Node<K>>>>,
 }
@@ -84,48 +84,33 @@ impl<K, V> NodeValue<K, V> {
 }
 
 #[derive(Clone)]
-pub struct LFUCacheOptions {
-    pub min_frequency: usize,
-    pub max_capacity: usize,
-}
-
-impl Default for LFUCacheOptions {
-    fn default() -> Self {
-        Self {
-            min_frequency: 1,
-            max_capacity: usize::MAX,
-        }
-    }
-}
-
-#[derive(Clone)]
-struct LFUCache<K, V> {
-    options: LFUCacheOptions,
+pub(crate) struct LFUCache<K, V> {
+    capacity: usize,
     head: Rc<RefCell<Node<K>>>,
     items: HashMap<Rc<K>, NodeValue<K, V>>,
 }
 
+
 impl<K, V> LFUCache<K, V>
 where
-    K: Eq + Hash + Clone + Debug,
+    K: Eq + Hash + Clone + Debug + Ord,
     V: Debug,
 {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            options: Default::default(),
+            capacity: usize::MAX,
             head: Default::default(),
             items: Default::default(),
         }
     }
 
-    fn with_options(options: LFUCacheOptions) -> Self {
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
-            options,
+            capacity,
             head: Default::default(),
             items: Default::default(),
         }
     }
-
     fn delete_node(node: Rc<RefCell<Node<K>>>) {
         if let Some(prev) = node.as_ref().borrow().prev.as_ref() {
             prev.as_ref().borrow_mut().next = node.as_ref().borrow().next.clone()
@@ -136,7 +121,7 @@ where
         }
     }
 
-    fn get(&mut self, key: &K) -> Option<&V> {
+    fn get_node_for_key(&mut self, key: &K) -> Option<&mut NodeValue<K, V>> {
         let key = if let Some(tmp) = self.items.get_key_value(key) {
             tmp.0.clone()
         } else {
@@ -156,7 +141,7 @@ where
             Some(next_freg) => {
                 if next_freg.as_ptr().eq(&self.head.as_ptr())
                     || next_freg.as_ref().borrow().freq_count
-                        != freq.as_ref().borrow().freq_count + 1
+                    != freq.as_ref().borrow().freq_count + 1
                 {
                     let freq_count = freq.as_ref().borrow().freq_count + 1;
                     Node::new(freq_count, &mut freq, Some(next_freg))
@@ -172,20 +157,63 @@ where
         if freq.as_ref().borrow().items.is_empty() {
             Self::delete_node(freq);
         }
-
-        return Some(&tmp.data);
+        Some(tmp)
     }
 
-    fn insert(&mut self, key: K, value: V) -> Result<(), CacheError> {
-        if self.items.contains_key(&key) {
-            return Err(CacheError::DuplicateEntry);
+    pub(crate) fn get(&mut self, key: &K) -> Option<&V> {
+        let node = self.get_node_for_key(key)?;
+        return Some(&node.data);
+    }
+
+
+    fn pop_lfu(&mut self) -> Option<V> {
+        if self.items.is_empty() {
+            return None
         }
+        let next_freg = self.head.as_ref().borrow_mut().next.clone()?;
+        let popped = next_freg.as_ref().borrow_mut().items.pop()?;
+        if next_freg.as_ref().borrow().items.is_empty() {
+            Self::delete_node(next_freg);
+        }
+        self.items.remove(&popped).map(|popped|{
+            popped.data
+        })
+    }
+
+    pub(crate) fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        let node = self.get_node_for_key(key)?;
+        return Some(&mut node.data);
+    }
+
+    pub(crate) fn remove(&mut self, key: &K) -> Option<V> {
+        let tmp = if let Some(tmp) = self.items.remove(key) {
+            tmp
+        } else {
+            return None;
+        };
+
+        let mut freq = tmp.parent.clone();
+        freq.as_ref().borrow_mut().items.remove(key);
+        if freq.as_ref().borrow().items.is_empty() {
+            Self::delete_node(freq);
+        }
+        return Some(tmp.data)
+    }
+
+    pub(crate) fn insert(&mut self, key: K, value: V) -> Option<V> {
+
+        let mut evicted = self.remove(&key);
+        if self.items.len() + 1 > self.capacity {
+            evicted = self.pop_lfu();
+        }
+
         let next_freg = self.head.as_ref().borrow_mut().next.clone();
         let mut freq = match next_freg {
-            None => Node::new(1, &mut self.head, None),
+            None =>{
+                Node::new(0, &mut self.head, None)},
             Some(freq) => {
-                if freq.as_ref().borrow().freq_count != self.options.min_frequency {
-                    Node::new(1, &mut self.head, Some(freq))
+                if freq.as_ref().borrow().freq_count != 0 {
+                    Node::new(0, &mut self.head, Some(freq))
                 } else {
                     freq
                 }
@@ -195,42 +223,44 @@ where
         freq.as_ref().borrow_mut().items.insert(key.clone());
         let value = NodeValue::new(value, freq);
         self.items.insert(key.clone(), value);
-        Ok(())
+        evicted
     }
 
-    fn prune(&mut self) -> Vec<(K, V)> {
-        if self.items.len() <= self.options.max_capacity {
-            return Vec::new();
-        }
-        if self.items.is_empty() {
-            return Vec::new();
-        }
-        let mut removed = Vec::with_capacity(self.items.len() - self.options.max_capacity);
+    pub(crate) fn is_empty(&self) -> bool {
+       self.items.is_empty()
+    }
 
-        let mut node = self.head.as_ref().borrow_mut().next.clone();
-        while let Some(next_node) = node {
-            for key in next_node.as_ref().borrow().items.iter() {
-                if self.items.len() > self.options.max_capacity {
-                    if let Some(r) = self.items.remove(key) {
-                        removed.push((key.as_ref().clone(), r.data))
-                    };
-                } else {
-                    break;
-                }
-            }
-            for (k, _) in removed.iter() {
-                next_node.as_ref().borrow_mut().items.remove(k);
-            }
-            if next_node.as_ref().borrow().items.is_empty() {
-                Self::delete_node(next_node.clone());
-            }
-            node = next_node.as_ref().borrow().next.clone()
+    pub(crate) fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub(crate) fn frequencies(&self) -> Vec<usize> {
+        let mut frequencies = Vec::new();
+        let mut node = self.head.as_ref().borrow().next.clone();
+        while let Some(n) = node {
+            frequencies.push(n.as_ref().borrow().freq_count);
+            node = n.as_ref().borrow().next.clone();
         }
-        removed
+        frequencies
+    }
+
+    pub(crate) fn freq_len(&self) -> usize {
+        let mut count = 0;
+        let mut node = self.head.as_ref().borrow().next.clone();
+        while let Some(n) = node {
+            count += 1;
+            node = n.as_ref().borrow().next.clone();
+        }
+        count
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.items.clear();
+        self.head = Default::default()
     }
 
     #[cfg(test)]
-    fn flatten(&self) -> BTreeMap<usize, HashSet<Rc<K>>> {
+    fn flatten(&self) -> BTreeMap<usize, IndexSet<Rc<K>>> {
         let mut map = BTreeMap::new();
         let mut node = self.head.as_ref().borrow().next.clone();
         while let Some(n) = node {
@@ -257,4 +287,309 @@ impl<K: Debug, V: Debug> Debug for LFUCache<K, V> {
 }
 
 #[cfg(test)]
-mod test {}
+mod test {
+    #[cfg(test)]
+    mod get {
+        use crate::lfu_cache::LFUCache;
+
+        #[test]
+        fn empty() {
+            let mut cache = LFUCache::<u64, u64>::new();
+            for i in 0..100 {
+                assert!(cache.get(&i).is_none())
+            }
+        }
+
+        #[test]
+        fn get_mut() {
+            let mut cache = LFUCache::new();
+            cache.insert(1, 2);
+            assert_eq!(cache.frequencies(), vec![0]);
+            *cache.get_mut(&1).unwrap() = 3;
+            assert_eq!(cache.frequencies(), vec![1]);
+            assert_eq!(cache.get(&1), Some(&3));
+        }
+
+        #[test]
+        fn getting_is_ok_after_adding_other_value() {
+            let mut cache = LFUCache::new();
+            cache.insert(1, 2);
+            assert_eq!(cache.get(&1), Some(&2));
+            cache.insert(3, 4);
+            assert_eq!(cache.get(&1), Some(&2));
+        }
+
+        #[test]
+        fn bounded_alternating_values() {
+            let mut cache = LFUCache::with_capacity(8);
+            cache.insert(1, 1);
+            cache.insert(2, 2);
+            for _ in 0..100 {
+                cache.get(&1);
+                cache.get(&2);
+            }
+
+            assert_eq!(cache.len(), 2);
+            assert_eq!(cache.frequencies(), vec![100]);
+        }
+    }
+
+    #[cfg(test)]
+    mod insert {
+        use crate::lfu_cache::LFUCache;
+
+        #[test]
+        fn insert_new() {
+            let mut cache = LFUCache::new();
+
+            for i in 0..100 {
+                cache.insert(i, i + 100);
+            }
+
+            for i in 0..100 {
+                assert_eq!(cache.get(&i), Some(&(i + 100)));
+                assert!(cache.get(&(i + 100)).is_none());
+            }
+        }
+
+        #[test]
+        fn reinsertion_of_same_key_resets_freq() {
+            let mut cache = LFUCache::new();
+            cache.insert(1, 1);
+            cache.get(&1);
+            cache.insert(1, 1);
+            assert_eq!(cache.frequencies(), vec![0]);
+        }
+
+        #[test]
+        fn insert_bounded() {
+            let mut cache = LFUCache::with_capacity(20);
+
+            for i in 0..100 {
+                cache.insert(i, i + 100);
+            }
+        }
+
+        #[test]
+        fn insert_returns_evicted() {
+            let mut cache = LFUCache::with_capacity(1);
+            assert_eq!(cache.insert(1, 2), None);
+            for _ in 0..10 {
+                assert_eq!(cache.insert(3, 4), Some(2));
+                assert_eq!(cache.insert(1, 2), Some(4));
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod pop {
+        use crate::lfu_cache::LFUCache;
+
+        #[test]
+        fn pop() {
+            let mut cache = LFUCache::new();
+            for i in 0..100 {
+                cache.insert(i, i + 100);
+            }
+
+            for i in 0..100 {
+                assert_eq!(cache.items.len(), 100 - i);
+                assert_eq!(cache.pop_lfu(), Some(200 - i - 1));
+            }
+        }
+
+        #[test]
+        fn pop_empty() {
+            let mut cache = LFUCache::<i32, i32>::new();
+            assert_eq!(None, cache.pop_lfu());
+            assert_eq!(None, cache.pop_lfu());
+        }
+    }
+
+    #[cfg(test)]
+    mod remove {
+        use crate::lfu_cache::LFUCache;
+
+        #[test]
+        fn remove_to_empty() {
+            let mut cache = LFUCache::new();
+            cache.insert(1, 2);
+            assert_eq!(cache.remove(&1), Some(2));
+            assert!(cache.is_empty());
+            assert_eq!(cache.freq_len(), 0);
+        }
+
+        #[test]
+        fn remove_empty() {
+            let mut cache = LFUCache::<usize, usize>::new();
+            assert!(cache.remove(&1).is_none());
+        }
+
+        #[test]
+        fn remove_to_nonempty() {
+            let mut cache = LFUCache::new();
+            cache.insert(1, 2);
+            cache.insert(3, 4);
+
+            assert_eq!(cache.remove(&1), Some(2));
+
+            assert!(!cache.is_empty());
+
+            assert_eq!(cache.remove(&3), Some(4));
+
+            assert!(cache.is_empty());
+            assert_eq!(cache.freq_len(), 0);
+        }
+
+        #[test]
+        fn remove_middle() {
+            let mut cache = LFUCache::new();
+            cache.insert(1, 2);
+            cache.insert(3, 4);
+            cache.insert(5, 6);
+            cache.insert(7, 8);
+            cache.insert(9, 10);
+            cache.insert(11, 12);
+
+            cache.get(&7);
+            cache.get(&9);
+            cache.get(&11);
+
+            assert_eq!(cache.frequencies(), vec![0, 1]);
+            assert_eq!(cache.len(), 6);
+
+            cache.remove(&9);
+            assert!(cache.get(&7).is_some());
+            assert!(cache.get(&11).is_some());
+
+            cache.remove(&3);
+            assert!(cache.get(&1).is_some());
+            assert!(cache.get(&5).is_some());
+        }
+
+        #[test]
+        fn remove_end() {
+            let mut cache = LFUCache::new();
+            cache.insert(1, 2);
+            cache.insert(3, 4);
+            cache.insert(5, 6);
+            cache.insert(7, 8);
+            cache.insert(9, 10);
+            cache.insert(11, 12);
+
+            cache.get(&7);
+            cache.get(&9);
+            cache.get(&11);
+
+            assert_eq!(cache.frequencies(), vec![0, 1]);
+            assert_eq!(cache.len(), 6);
+
+            cache.remove(&7);
+            assert!(cache.get(&9).is_some());
+            assert!(cache.get(&11).is_some());
+
+            cache.remove(&1);
+            assert!(cache.get(&3).is_some());
+            assert!(cache.get(&5).is_some());
+        }
+
+        #[test]
+        fn remove_start() {
+            let mut cache = LFUCache::new();
+            cache.insert(1, 2);
+            cache.insert(3, 4);
+            cache.insert(5, 6);
+            cache.insert(7, 8);
+            cache.insert(9, 10);
+            cache.insert(11, 12);
+
+            cache.get(&7);
+            cache.get(&9);
+            cache.get(&11);
+
+            assert_eq!(cache.frequencies(), vec![0, 1]);
+            assert_eq!(cache.len(), 6);
+
+            cache.remove(&11);
+            assert!(cache.get(&9).is_some());
+            assert!(cache.get(&7).is_some());
+
+            cache.remove(&5);
+            assert!(cache.get(&3).is_some());
+            assert!(cache.get(&1).is_some());
+        }
+
+        #[test]
+        fn remove_connects_next_owner() {
+            let mut cache = LFUCache::new();
+            cache.insert(1, 1);
+            cache.insert(2, 2);
+            assert_eq!(cache.get(&1), Some(&1));
+            assert_eq!(cache.remove(&2), Some(2));
+            assert_eq!(cache.get(&1), Some(&1));
+        }
+    }
+
+    #[cfg(test)]
+    mod bookkeeping {
+        use std::num::NonZeroUsize;
+        use crate::lfu_cache::LFUCache;
+
+
+        #[test]
+        fn getting_one_element_has_constant_freq_list_size() {
+            let mut cache = LFUCache::new();
+            cache.insert(1, 2);
+            assert_eq!(cache.freq_len(), 1);
+
+            for _ in 0..100 {
+                cache.get(&1);
+                assert_eq!(cache.freq_len(), 1);
+            }
+        }
+
+        #[test]
+        fn freq_list_node_merges() {
+            let mut cache = LFUCache::new();
+            cache.insert(1, 2);
+            cache.insert(3, 4);
+            assert_eq!(cache.freq_len(), 1);
+            assert!(cache.get(&1).is_some());
+            assert_eq!(cache.freq_len(), 2);
+            assert!(cache.get(&3).is_some());
+            assert_eq!(cache.freq_len(), 1);
+        }
+
+        #[test]
+        fn freq_list_multi_items() {
+            let mut cache = LFUCache::new();
+            cache.insert(1, 2);
+            cache.get(&1);
+            cache.get(&1);
+            cache.insert(3, 4);
+            assert_eq!(cache.freq_len(), 2);
+            cache.get(&3);
+            assert_eq!(cache.freq_len(), 2);
+            cache.get(&3);
+            assert_eq!(cache.freq_len(), 1);
+        }
+
+        #[test]
+        fn clear_is_ok() {
+            let mut cache = LFUCache::new();
+            for i in 0..10 {
+                cache.insert(i, i);
+            }
+
+            assert!(!cache.is_empty());
+
+            cache.clear();
+
+            assert!(cache.is_empty());
+
+            for i in 0..10 {
+                assert!(cache.get(&i).is_none());
+            }
+        }
+    }
+}

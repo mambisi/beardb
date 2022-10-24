@@ -38,6 +38,7 @@ pub struct TableOptions {
     pub(crate) block_size: usize,
     pub(crate) table_size: usize,
     pub(crate) table_capacity: usize,
+    pub(crate) checksum: bool,
     pub(crate) policy: BloomFilterPolicy,
 }
 
@@ -47,6 +48,7 @@ impl Default for TableOptions {
             block_size: 4 * 1024,
             table_size: 2 << 20,
             table_capacity: ((2_u64 << 20_u64) as f64 / 0.9) as usize,
+            checksum: true,
             policy: BloomFilterPolicy::new(10),
         }
     }
@@ -88,7 +90,7 @@ impl InnerTable {
             Some(index) => index,
         };
         let raw_block = &self.data[block_index.offset_start..block_index.offset_end];
-        let block = Block::open(block_index.offset_start, raw_block);
+        let block = Block::open(block_index.offset_start, raw_block, self.opts.as_ref())?;
         return Ok(Some(block));
     }
 
@@ -99,7 +101,7 @@ impl InnerTable {
             Some(index) => index,
         };
         let raw_block = &self.data[block_index.offset_start..block_index.offset_end];
-        let block = Block::open(block_index.offset_start, raw_block);
+        let block = Block::open(block_index.offset_start, raw_block, self.opts.as_ref())?;
         if let Some((start, end)) = block.get_value_offset_abs(key) {
             return Ok(Some(&self.data[start..end]));
         }
@@ -230,5 +232,126 @@ impl Iter for TableIterator {
     fn seek_to_last(&mut self) {
         self.cursor = (self.table.block_count() - 1) as isize;
         self.reset()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::bloom::BloomFilterPolicy;
+    use crate::iter::Iter;
+    use crate::table::{InnerTable, Table, TableOptions};
+    use crate::table_builder::TableBuilder;
+    use core::slice::SlicePattern;
+    use memmap2::{Mmap, MmapMut};
+    use std::fs::OpenOptions;
+    use std::sync::Arc;
+    use tempfile::tempfile;
+
+    fn table_opts() -> Arc<TableOptions> {
+        Arc::new(TableOptions {
+            block_size: 11 * 5,
+            table_size: 2 << 20,
+            table_capacity: ((2_u64 << 20_u64) as f64 / 0.9) as usize,
+            checksum: true,
+            policy: BloomFilterPolicy::new(10),
+        })
+    }
+
+    #[test]
+    fn basic_test_more_data() {
+        let mut file = tempfile().unwrap();
+        //let mut dst = unsafe { MmapMut::map_mut(&file).unwrap() };
+        let data = vec![
+            "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
+            "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",
+            "aby", "abz",
+        ];
+
+        let opts = table_opts();
+        let mut table = TableBuilder::new_with_options(&mut file, opts.clone());
+
+        for item in data {
+            table.add(item.as_bytes(), item.as_bytes()).unwrap();
+        }
+
+        table.finish().unwrap();
+        //file.sync_all().unwrap();
+
+        let data = unsafe { Mmap::map(&file).unwrap() };
+        let table = InnerTable::open(12, data, opts.clone());
+        let index = table.index().unwrap();
+        println!("block index {:?}", index.find_key_block(&[97, 98, 113]));
+        println!("---------------------------------------------------------------");
+        println!("block index {:?}", index.find_key_block(b"abr"));
+        println!("Value {:?}", table.get(b"abr"));
+        println!("---------------------------------------------------------------");
+        println!("block index {:?}", index.find_key_block(b"aba"));
+        println!("Value {:?}", table.get(b"aba"));
+        println!("---------------------------------------------------------------");
+        println!("block index {:?}", index.find_key_block(b"zzz"));
+
+        println!("---------------------------------------------------------------");
+        let block = table.get_block(0).unwrap().unwrap();
+        println!("iter block {:?}", block);
+        let mut block_iter = block.into_iter();
+        while block_iter.valid() {
+            block_iter.next();
+            println!("{:?}", block_iter.current())
+        }
+    }
+
+    fn table_opts_mid() -> Arc<TableOptions> {
+        Arc::new(TableOptions {
+            block_size: 11 * 20,
+            table_size: 2 << 20,
+            table_capacity: ((2_u64 << 20_u64) as f64 / 0.9) as usize,
+            checksum: true,
+            policy: BloomFilterPolicy::new(10),
+        })
+    }
+
+    #[test]
+    fn basic_test_iter_data() {
+        let mut file = tempfile().unwrap();
+        //let mut dst = unsafe { MmapMut::map_mut(&file).unwrap() };
+        let data = vec![
+            "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
+            "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",
+            "aby", "abz",
+        ];
+
+        let opts = table_opts_mid();
+        let mut table = TableBuilder::new_with_options(&mut file, opts.clone());
+
+        for item in data {
+            table.add(item.as_bytes(), item.as_bytes()).unwrap();
+        }
+
+        table.finish().unwrap();
+        //file.sync_all().unwrap();
+
+        let data = unsafe { Mmap::map(&file).unwrap() };
+        let table = Table::open(12, data, opts.clone());
+        let mut table_iter = table.iter().unwrap();
+
+        // table_iter.next();
+        // table_iter.seek(&[97, 98, 103]);
+
+        while table_iter.valid() {
+            println!("table_iter.current {:?}", table_iter.current());
+            table_iter.next();
+        }
+        println!("---------------------------------------------------------------");
+        table_iter.seek(&[97, 98, 103]);
+        while table_iter.valid() {
+            println!("table_iter.current {:?}", table_iter.current());
+            table_iter.next();
+        }
+        println!("---------------------------------------------------------------");
+        table_iter.seek(&[97, 98, 103]);
+        while table_iter.valid() {
+            println!("table_iter.current {:?}", table_iter.current());
+            table_iter.prev();
+        }
     }
 }

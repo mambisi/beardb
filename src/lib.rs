@@ -15,13 +15,13 @@ mod iter;
 mod lfu_cache;
 mod log;
 mod memtable;
+mod memtable_cache;
 mod metadata;
 mod skiplist;
 mod table;
 mod table_builder;
 mod table_index;
 mod types;
-mod memtable_cache;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

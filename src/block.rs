@@ -2,9 +2,9 @@ use crate::codec::decode_fixed32;
 use crate::constant::{BLOCK_ENTRY_HEADER_SIZE, BLOCK_META_SIZE, CHECKSUM_SIZE};
 use crate::iter::Iter;
 use crate::table::{decode_key, decode_key_value, TableOptions};
+use crate::{ensure, Error};
 use std::io::Write;
 use std::sync::Arc;
-use crate::{ensure, Error};
 
 #[derive(Debug)]
 pub(crate) struct Block<'a> {
@@ -23,11 +23,18 @@ pub(crate) struct OwnedBlock {
 }
 
 impl<'a> Block<'a> {
-    pub(crate) fn open(block_offset: usize, data: &'a [u8], opts : &TableOptions) -> crate::Result<Self> {
+    pub(crate) fn open(
+        block_offset: usize,
+        data: &'a [u8],
+        opts: &TableOptions,
+    ) -> crate::Result<Self> {
         let checksum = decode_fixed32(&data[data.len() - CHECKSUM_SIZE..data.len()]);
         if opts.checksum {
             let cal_checksum = crc32fast::hash(&data[..data.len() - CHECKSUM_SIZE]);
-            ensure!(cal_checksum == checksum, Error::Corruption("checksum failed".to_string()));
+            ensure!(
+                cal_checksum == checksum,
+                Error::Corruption("checksum failed".to_string())
+            );
         }
         let block_meta_size = decode_fixed32(
             &data[data.len() - CHECKSUM_SIZE - BLOCK_META_SIZE..data.len() - CHECKSUM_SIZE],
@@ -39,12 +46,12 @@ impl<'a> Block<'a> {
             .chunks_exact(4)
             .map(|k| decode_fixed32(k) as usize)
             .collect();
-       Ok( Self {
-           block_offset,
-           data,
-           entry_offsets,
-           checksum,
-       })
+        Ok(Self {
+            block_offset,
+            data,
+            entry_offsets,
+            checksum,
+        })
     }
 
     pub(crate) fn get(&'a self, key: &[u8]) -> Option<&'a [u8]> {
@@ -174,15 +181,15 @@ impl BlockBuilder {
     }
 
     pub(crate) fn finish<W: Write>(&mut self, dst: &mut W) -> crate::Result<usize> {
-
         let offset_count = self.entry_offsets.len();
         for offset in &self.entry_offsets {
             self.data.extend_from_slice(offset.to_le_bytes().as_slice());
         }
-        self.data.extend_from_slice(&(offset_count as u32).to_le_bytes());
+        self.data
+            .extend_from_slice(&(offset_count as u32).to_le_bytes());
         let crc = crc32fast::hash(self.data.as_slice());
 
-        let mut written_bytes = dst.write(self.data.as_slice())? +  dst.write(&crc.to_le_bytes())?;
+        let mut written_bytes = dst.write(self.data.as_slice())? + dst.write(&crc.to_le_bytes())?;
         self.data.clear();
         self.base_key.clear();
         self.entry_offsets.clear();

@@ -1,10 +1,10 @@
+use indexmap::IndexSet;
 use std::borrow::{Borrow, BorrowMut};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::rc::Rc;
-use indexmap::IndexSet;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -90,7 +90,6 @@ pub(crate) struct LFUCache<K, V> {
     items: HashMap<Rc<K>, NodeValue<K, V>>,
 }
 
-
 impl<K, V> LFUCache<K, V>
 where
     K: Eq + Hash + Clone + Debug + Ord,
@@ -141,7 +140,7 @@ where
             Some(next_freg) => {
                 if next_freg.as_ptr().eq(&self.head.as_ptr())
                     || next_freg.as_ref().borrow().freq_count
-                    != freq.as_ref().borrow().freq_count + 1
+                        != freq.as_ref().borrow().freq_count + 1
                 {
                     let freq_count = freq.as_ref().borrow().freq_count + 1;
                     Node::new(freq_count, &mut freq, Some(next_freg))
@@ -165,19 +164,16 @@ where
         return Some(&node.data);
     }
 
-
     fn pop_lfu(&mut self) -> Option<V> {
         if self.items.is_empty() {
-            return None
+            return None;
         }
         let next_freg = self.head.as_ref().borrow_mut().next.clone()?;
         let popped = next_freg.as_ref().borrow_mut().items.pop()?;
         if next_freg.as_ref().borrow().items.is_empty() {
             Self::delete_node(next_freg);
         }
-        self.items.remove(&popped).map(|popped|{
-            popped.data
-        })
+        self.items.remove(&popped).map(|popped| popped.data)
     }
 
     pub(crate) fn get_mut(&mut self, key: &K) -> Option<&mut V> {
@@ -197,11 +193,10 @@ where
         if freq.as_ref().borrow().items.is_empty() {
             Self::delete_node(freq);
         }
-        return Some(tmp.data)
+        return Some(tmp.data);
     }
 
     pub(crate) fn insert(&mut self, key: K, value: V) -> Option<V> {
-
         let mut evicted = self.remove(&key);
         if self.items.len() + 1 > self.capacity {
             evicted = self.pop_lfu();
@@ -209,8 +204,7 @@ where
 
         let next_freg = self.head.as_ref().borrow_mut().next.clone();
         let mut freq = match next_freg {
-            None =>{
-                Node::new(0, &mut self.head, None)},
+            None => Node::new(0, &mut self.head, None),
             Some(freq) => {
                 if freq.as_ref().borrow().freq_count != 0 {
                     Node::new(0, &mut self.head, Some(freq))
@@ -227,7 +221,7 @@ where
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-       self.items.is_empty()
+        self.items.is_empty()
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -532,9 +526,8 @@ mod test {
 
     #[cfg(test)]
     mod bookkeeping {
-        use std::num::NonZeroUsize;
         use crate::lfu_cache::LFUCache;
-
+        use std::num::NonZeroUsize;
 
         #[test]
         fn getting_one_element_has_constant_freq_list_size() {

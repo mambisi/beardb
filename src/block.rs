@@ -81,7 +81,7 @@ impl<'a> Block<'a> {
             block_offset: self.block_offset,
             data: self.data.to_vec(),
             entry_offsets: self.entry_offsets,
-            checksum: self.checksum
+            checksum: self.checksum,
         }
     }
     pub(crate) fn into_iter(self) -> BlockIterator {
@@ -100,7 +100,6 @@ pub(crate) struct BlockIterator {
 }
 
 impl BlockIterator {
-
     pub(crate) fn valid(&self) -> bool {
         if self.cursor < 0 || self.cursor > self.block.entry_offsets.len() as isize - 1 {
             return false;
@@ -123,13 +122,10 @@ impl BlockIterator {
     }
 
     pub(crate) fn current(&self) -> Option<(&[u8], &[u8])> {
-        self
-            .block
+        self.block
             .entry_offsets
             .get(self.cursor as usize)
-            .map(|entry_offset| {
-                decode_key_value(&self.block.data[*entry_offset..])
-            })
+            .map(|entry_offset| decode_key_value(&self.block.data[*entry_offset..]))
     }
 
     pub(crate) fn seek(&mut self, target: &[u8]) {

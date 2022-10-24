@@ -2,14 +2,14 @@ use crate::block::{Block, BlockIterator};
 use crate::bloom::BloomFilterPolicy;
 use crate::codec::decode_fixed32;
 use crate::constant::BLOCK_ENTRY_HEADER_SIZE;
+use crate::iter::Iter;
 use crate::table_index::{BlockIndex, TableIndexReader};
 use crate::{codec, Error};
 use core::slice::SlicePattern;
-use std::marker::PhantomData;
 use memmap2::Mmap;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::thread::current;
-use crate::iter::Iter;
 
 pub(crate) fn decode_key(data: &[u8]) -> &[u8] {
     //TODO: Handle index errors
@@ -108,25 +108,20 @@ impl InnerTable {
 
     fn block_count(&self) -> usize {
         match self.index() {
-            Ok(index) => {
-                index.blocks_count()
-            }
-            Err(_) => {
-                0
-            }
+            Ok(index) => index.blocks_count(),
+            Err(_) => 0,
         }
     }
 }
 
-
 pub(crate) struct Table {
-    inner : Arc<InnerTable>
+    inner: Arc<InnerTable>,
 }
 
 impl Table {
     fn open(id: u64, file: Mmap, opts: Arc<TableOptions>) -> Self {
         Self {
-            inner: Arc::new(InnerTable::open(id,file,opts))
+            inner: Arc::new(InnerTable::open(id, file, opts)),
         }
     }
 
@@ -144,12 +139,8 @@ impl Table {
 
     fn iter(&self) -> crate::Result<TableIterator> {
         let current = match self.get_block(0) {
-            Ok(Some(c)) => {
-                Box::new(c.into_iter())
-            }
-            _ => {
-                return Err(Error::InvalidIterator)
-            }
+            Ok(Some(c)) => Box::new(c.into_iter()),
+            _ => return Err(Error::InvalidIterator),
         };
         Ok(TableIterator {
             cursor: 0,
@@ -160,24 +151,23 @@ impl Table {
     }
 }
 
-
-
-pub(crate) struct TableIterator{
-    cursor : isize,
+pub(crate) struct TableIterator {
+    cursor: isize,
     table: Arc<InnerTable>,
-    current : Box<BlockIterator>,
-    error : Option<Error>,
+    current: Box<BlockIterator>,
+    error: Option<Error>,
 }
 
 impl TableIterator {
     fn reset(&mut self) {
+        if !self.valid() {
+            return;
+        }
         match self.table.get_block(self.cursor as usize) {
             Ok(Some(c)) => {
                 self.current = Box::new(c.into_iter());
             }
-            _ => {
-                self.error = Some(Error::InvalidIterator)
-            }
+            _ => self.error = Some(Error::InvalidIterator),
         };
     }
 }
@@ -186,7 +176,10 @@ impl Iter for TableIterator {
     type Item = (Box<[u8]>, Box<[u8]>);
 
     fn valid(&self) -> bool {
-        if self.cursor < 0 || self.cursor > self.table.block_count() as isize - 1 {
+        if self.cursor < 0
+            || self.cursor > self.table.block_count() as isize - 1
+            || self.error.is_some()
+        {
             return false;
         }
         true
@@ -196,7 +189,8 @@ impl Iter for TableIterator {
         self.current.prev();
         if !self.current.valid() {
             self.cursor -= 1;
-            self.reset()
+            self.reset();
+            return;
         }
     }
 
@@ -210,16 +204,14 @@ impl Iter for TableIterator {
     }
 
     fn current(&self) -> Option<Self::Item> {
-        self.current.current().map(|(k,v)| {
-            (k.to_vec().into_boxed_slice(), v.to_vec().into_boxed_slice())
-        })
+        self.current
+            .current()
+            .map(|(k, v)| (k.to_vec().into_boxed_slice(), v.to_vec().into_boxed_slice()))
     }
 
     fn seek(&mut self, target: &[u8]) {
-        let index = match self.table.index(){
-            Ok(index) => {
-                index
-            }
+        let index = match self.table.index() {
+            Ok(index) => index,
             Err(err) => {
                 self.error = Some(err);
                 return;

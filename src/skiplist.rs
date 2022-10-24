@@ -162,11 +162,13 @@ impl InnerSkipList {
                 level -= 1;
             }
 
-            Ok(if current == self.head.as_ref() || (*(*current).key).lt(key) {
-                None
-            } else {
-                current.as_ref()
-            })
+            Ok(
+                if current == self.head.as_ref() || (*(*current).key).lt(key) {
+                    None
+                } else {
+                    current.as_ref()
+                },
+            )
         }
     }
 
@@ -188,11 +190,15 @@ impl InnerSkipList {
                 }
                 level -= 1;
             }
-            Ok(if current == self.head.as_ref() || self.cmp.cmp((*current).key(), key)? != Ordering::Less{
-                None
-            } else {
-                current.as_ref()
-            })
+            Ok(
+                if current == self.head.as_ref()
+                    || self.cmp.cmp((*current).key(), key)? != Ordering::Less
+                {
+                    None
+                } else {
+                    current.as_ref()
+                },
+            )
         }
     }
 

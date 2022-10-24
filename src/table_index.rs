@@ -111,14 +111,11 @@ impl<'a> TableIndexReader<'a> {
     }
 
     pub(crate) fn get_block_index(&self, at: usize) -> Option<BlockIndex> {
-        self.inner.offsets.get(at).map(|index| {
-
-            BlockIndex {
-                base_key: index.base_key.as_slice(),
-                bloomfilter: index.filter.as_slice(),
-                offset_start: index.offset_start as usize,
-                offset_end: index.offset_end as usize,
-            }
+        self.inner.offsets.get(at).map(|index| BlockIndex {
+            base_key: index.base_key.as_slice(),
+            bloomfilter: index.filter.as_slice(),
+            offset_start: index.offset_start as usize,
+            offset_end: index.offset_end as usize,
         })
     }
 
@@ -137,13 +134,14 @@ impl<'a> TableIndexReader<'a> {
     }
 
     pub(crate) fn find_key_block(&self, key: &[u8]) -> Option<BlockIndex> {
-        self.get_block_index(self.find_target_key_block(key)).and_then(|block_index| {
-            if self.opts.policy.key_and_match(key, block_index.bloomfilter) {
-                Some(block_index)
-            }else {
-                None
-            }
-        })
+        self.get_block_index(self.find_target_key_block(key))
+            .and_then(|block_index| {
+                if self.opts.policy.key_and_match(key, block_index.bloomfilter) {
+                    Some(block_index)
+                } else {
+                    None
+                }
+            })
     }
 
     pub(crate) fn find_target_key_block(&self, target_key: &[u8]) -> usize {

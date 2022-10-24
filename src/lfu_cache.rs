@@ -143,7 +143,7 @@ where
             return None;
         };
 
-        let tmp =  self.items.get_mut(&key)?;
+        let tmp = self.items.get_mut(&key)?;
 
         let mut freq = tmp.parent.clone();
         let next_freq = tmp.parent.as_ref().borrow_mut().next.clone();

@@ -1,4 +1,5 @@
 #![feature(slice_pattern)]
+#![feature(generic_associated_types)]
 extern crate core;
 
 use crate::error::Error;

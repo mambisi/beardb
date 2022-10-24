@@ -53,7 +53,7 @@ impl TableIndexBuilder {
                 Vec::from(&array[BLOCK_ENTRY_HEADER_SIZE..BLOCK_ENTRY_HEADER_SIZE + key_size]);
             let offset_start = *start;
             let offset_end = match index.get(i + 1) {
-                None => (blocks.len() - 1) as u32,
+                None => (blocks.len()) as u32,
                 Some(n) => *n,
             };
             let index = BlockOffsetsIndex {
@@ -112,6 +112,7 @@ impl<'a> TableIndexReader<'a> {
 
     pub(crate) fn get_block_index(&self, at: usize) -> Option<BlockIndex> {
         self.inner.offsets.get(at).map(|index| {
+
             BlockIndex {
                 base_key: index.base_key.as_slice(),
                 bloomfilter: index.filter.as_slice(),
@@ -136,36 +137,21 @@ impl<'a> TableIndexReader<'a> {
     }
 
     pub(crate) fn find_key_block(&self, key: &[u8]) -> Option<BlockIndex> {
-        let pos = self
-            .inner
-            .offsets
-            .partition_point(|t| key.ge(t.base_key.as_slice()));
-        let index = &self.inner.offsets[pos - 1];
-        let block_index: BlockIndex = BlockIndex {
-            base_key: index.base_key.as_slice(),
-            bloomfilter: index.filter.as_slice(),
-            offset_start: index.offset_start as usize,
-            offset_end: index.offset_end as usize,
-        };
-        if self.opts.policy.key_and_match(key, block_index.bloomfilter) {
-            return Some(block_index);
-        }
-        return None;
+        self.get_block_index(self.find_target_key_block(key)).and_then(|block_index| {
+            if self.opts.policy.key_and_match(key, block_index.bloomfilter) {
+                Some(block_index)
+            }else {
+                None
+            }
+        })
     }
 
-    pub(crate) fn find_target_key_block(&self, target_key: &[u8]) -> BlockIndex {
+    pub(crate) fn find_target_key_block(&self, target_key: &[u8]) -> usize {
         let pos = self
             .inner
             .offsets
             .partition_point(|t| target_key.ge(t.base_key.as_slice()));
-        let index = &self.inner.offsets[pos - 1];
-        let block_index: BlockIndex = BlockIndex {
-            base_key: index.base_key.as_slice(),
-            bloomfilter: index.filter.as_slice(),
-            offset_start: index.offset_start as usize,
-            offset_end: index.offset_end as usize,
-        };
-        block_index
+        pos - 1
     }
 
     pub(crate) fn contains_key(&self, key: &[u8]) -> bool {

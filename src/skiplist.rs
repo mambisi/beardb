@@ -326,7 +326,7 @@ impl SkipList {
         self.inner.arena.allocated_bytes()
     }
 
-    pub(crate) fn iter<'a>(&'a self) -> Box<dyn 'a + Iter<Item = &'a [u8]>> {
+    pub(crate) fn iter<'a>(&self) -> Box<dyn 'a + Iter<Item = &'a [u8]>> {
         Box::new(SkipMapIterator {
             list: self.inner.clone(),
             node: self.inner.head.as_ref() as *const Node,

@@ -12,6 +12,14 @@ pub(crate) struct Block<'a> {
     pub(crate) checksum: u32,
 }
 
+#[derive(Debug)]
+pub(crate) struct OwnedBlock {
+    pub(crate) block_offset: usize,
+    pub(crate) data: Vec<u8>,
+    pub(crate) entry_offsets: Vec<usize>,
+    pub(crate) checksum: u32,
+}
+
 impl<'a> Block<'a> {
     pub(crate) fn open(block_offset: usize, data: &'a [u8]) -> Self {
         let checksum = decode_fixed32(&data[data.len() - CHECKSUM_SIZE..data.len()]);
@@ -68,64 +76,63 @@ impl<'a> Block<'a> {
         self.entry_offsets.len()
     }
 
-    pub(crate) fn into_iter(self) -> BlockIterator<'a> {
+    fn to_owned(self) -> OwnedBlock {
+        OwnedBlock {
+            block_offset: self.block_offset,
+            data: self.data.to_vec(),
+            entry_offsets: self.entry_offsets,
+            checksum: self.checksum
+        }
+    }
+    pub(crate) fn into_iter(self) -> BlockIterator {
         let cursor = 0;
-        let entry_offset = self.entry_offsets[cursor as usize];
-        let item = Some(decode_key_value(&self.data[entry_offset..]));
         BlockIterator {
             cursor,
-            block: self,
-            item,
+            block: self.to_owned(),
         }
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct BlockIterator<'a> {
+pub(crate) struct BlockIterator {
     cursor: isize,
-    block: Block<'a>,
-    item: Option<(&'a [u8], &'a [u8])>,
+    block: OwnedBlock,
 }
-impl<'a> BlockIterator<'a> {
-    fn reset(&mut self) {
-        self.item = self
-            .block
-            .entry_offsets
-            .get(self.cursor as usize)
-            .map(|entry_offset| decode_key_value(&self.block.data[*entry_offset..]));
-    }
-}
-impl<'a> Iter for BlockIterator<'a> {
-    type Item = (&'a [u8], &'a [u8]);
 
-    fn valid(&self) -> bool {
+impl BlockIterator {
+
+    pub(crate) fn valid(&self) -> bool {
         if self.cursor < 0 || self.cursor > self.block.entry_offsets.len() as isize - 1 {
             return false;
         }
         true
     }
 
-    fn prev(&mut self) {
+    pub(crate) fn prev(&mut self) {
         if !self.valid() {
             return;
         }
-        self.reset();
         self.cursor -= 1;
     }
 
-    fn next(&mut self) {
+    pub(crate) fn next(&mut self) {
         if !self.valid() {
             return;
         }
-        self.reset();
         self.cursor += 1;
     }
 
-    fn current(&self) -> Option<Self::Item> {
-        self.item
+    pub(crate) fn current(&self) -> Option<(&[u8], &[u8])> {
+        self
+            .block
+            .entry_offsets
+            .get(self.cursor as usize)
+            .map(|entry_offset| {
+                decode_key_value(&self.block.data[*entry_offset..])
+            })
     }
 
-    fn seek(&mut self, target: &[u8]) {
+    pub(crate) fn seek(&mut self, target: &[u8]) {
         self.cursor = match self.block.entry_offsets.binary_search_by(|entry_offset| {
             let entry_key = decode_key(&self.block.data[*entry_offset..]);
             entry_key.cmp(target)
@@ -133,17 +140,14 @@ impl<'a> Iter for BlockIterator<'a> {
             Ok(index) => index as isize,
             Err(index) => index as isize,
         };
-        self.reset();
     }
 
-    fn seek_to_first(&mut self) {
+    pub(crate) fn seek_to_first(&mut self) {
         self.cursor = (*self.block.entry_offsets.first().unwrap_or(&0)) as isize;
-        self.reset();
     }
 
-    fn seek_to_last(&mut self) {
+    pub(crate) fn seek_to_last(&mut self) {
         self.cursor = (*self.block.entry_offsets.last().unwrap_or(&0)) as isize;
-        self.reset();
     }
 }
 

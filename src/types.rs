@@ -4,6 +4,9 @@ use std::cmp::Ordering;
 use std::io::Read;
 use std::mem::size_of;
 
+pub type CacheKey = [u8; 16];
+pub type CacheID = u64;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ValueType {
     Deletion = 0,

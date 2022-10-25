@@ -2,6 +2,7 @@ use indexmap::IndexSet;
 use std::borrow::{Borrow, BorrowMut};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::hash_map::Iter as HashMapIter;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::rc::Rc;
@@ -253,16 +254,24 @@ where
         self.head = Default::default()
     }
 
-    #[cfg(test)]
-    fn flatten(&self) -> BTreeMap<usize, IndexSet<Rc<K>>> {
-        let mut map = BTreeMap::new();
-        let mut node = self.head.as_ref().borrow().next.clone();
-        while let Some(n) = node {
-            map.insert(
-                n.as_ref().borrow().freq_count,
-                n.as_ref().borrow().items.clone(),
-            );
-            node = n.as_ref().borrow().next.clone();
+    pub(crate) fn iter<'a>(&'a self) -> Box<dyn 'a + Iterator<Item = (&K,&V)>> {
+        Box::new(self.items.iter().map(|(key,node)| {
+            (key.as_ref(),&node.data)
+        }))
+    }
+
+    pub(crate) fn freq_table(&self) -> BTreeMap<usize, &IndexSet<Rc<K>>> {
+        let mut map : BTreeMap<usize, &IndexSet<Rc<K>>> = BTreeMap::new();
+        // SAFETY: has exclusive reference to self
+        unsafe {
+            let mut node = &(*self.head.as_ref().as_ptr()).next;
+            while let Some(n) = node {
+                map.insert(
+                    (*n.as_ref().as_ptr()).freq_count,
+                    &(*n.as_ref().as_ptr()).items,
+                );
+                node = &(*n.as_ref().as_ptr()).next;
+            }
         }
         map
     }

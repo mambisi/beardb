@@ -14,6 +14,10 @@ crc32fast = "1.3.2"
 bytecheck = "0.6.9"
 memmap2 = "0.5.7"
 indexmap = "1.9.1"
+bit-vec = "0.6.3"
+crossbeam = "0.8.2"
+parking_lot = "0.12.1"
 [dev-dependencies]
 pretty_assertions = "1.3.0"
 tempfile = "3.3.0"
+xxhash-rust = {version = "0.8.6", features = ["xxh3", "const_xxh64"]}

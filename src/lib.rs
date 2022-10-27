@@ -22,6 +22,10 @@ mod table;
 mod table_builder;
 mod table_index;
 mod types;
+mod lru_cache;
+mod rcache;
+#[cfg(test)]
+mod test_utils;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

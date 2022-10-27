@@ -126,14 +126,16 @@ impl BloomFilterPolicy {
 #[cfg(test)]
 mod test {
     use crate::bloom::BloomFilterPolicy;
+    use crate::test_utils;
+    use crate::test_utils::BloomTest;
 
-    struct BloomTest {
+    struct BloomTestImpl {
         policy: BloomFilterPolicy,
         filter: Vec<u8>,
         keys: Vec<Vec<u8>>,
     }
 
-    impl Default for BloomTest {
+    impl Default for BloomTestImpl {
         fn default() -> Self {
             Self {
                 policy: BloomFilterPolicy::new(10),
@@ -143,7 +145,7 @@ mod test {
         }
     }
 
-    impl BloomTest {
+    impl BloomTest for BloomTestImpl {
         fn reset(&mut self) {
             self.keys.clear();
             self.filter.clear()
@@ -153,15 +155,6 @@ mod test {
             self.keys.push(key.to_vec())
         }
 
-        fn build(&mut self) {
-            let mut key_slices = Vec::new();
-            for key in self.keys.iter() {
-                key_slices.push(key.as_slice())
-            }
-            self.filter.clear();
-            self.policy.create_filter(key_slices, &mut self.filter);
-            self.keys.clear()
-        }
         fn matches(&mut self, key: &[u8]) -> bool {
             if !self.keys.is_empty() {
                 self.build();
@@ -173,80 +166,33 @@ mod test {
             self.filter.len()
         }
 
-        fn false_positive_rate(&mut self) -> f64 {
-            let mut results = 0.0;
-            for i in 0..10000_i32 {
-                if self.matches(&(i + 1000000000).to_le_bytes()) {
-                    results += 1.0;
-                }
-            }
-            return results / 10000.0;
-        }
-    }
 
-    fn next_length(mut len: usize) -> usize {
-        if len < 10 {
-            len += 1;
-        } else if len < 100 {
-            len += 10;
-        } else if len < 1000 {
-            len += 100;
-        } else {
-            len += 1000;
+        fn build(&mut self) {
+            let mut key_slices = Vec::new();
+            for key in self.keys.iter() {
+                key_slices.push(key.as_slice())
+            }
+            self.filter.clear();
+            self.policy.create_filter(key_slices, &mut self.filter);
+            self.keys.clear()
         }
-        return len;
     }
 
     #[test]
     fn empty_filter() {
-        let mut t = BloomTest::default();
-        assert!(!t.matches(b"hello"));
-        assert!(!t.matches(b"world"));
+        let mut t = BloomTestImpl::default();
+        test_utils::empty_filter(t)
     }
 
     #[test]
     fn small() {
-        let mut t = BloomTest::default();
-        t.add(b"hello");
-        t.add(b"world");
-        assert!(t.matches(b"hello"));
-        assert!(t.matches(b"world"));
-        assert!(!t.matches(b"x"));
-        assert!(!t.matches(b"foo"));
+        let mut t = BloomTestImpl::default();
+        test_utils::small(t)
     }
 
     #[test]
     fn varying_lengths() {
-        let mut t = BloomTest::default();
-        let mut mediocre_filters = 0;
-        let mut good_filters = 0;
-        let mut len = 1;
-        while len <= 10000 {
-            t.reset();
-            for i in 0..len as i32 {
-                t.add(&(i.to_le_bytes()))
-            }
-            t.build();
-            assert!(t.filter_size() < (len * 10 / 8) + 40, "{}", len);
-            for i in 0..len as i32 {
-                assert!(t.matches(&(i.to_le_bytes())), "Length {}; key {}", len, i)
-            }
-
-            let rate = t.false_positive_rate();
-            eprintln!(
-                "False positives: {} @ length = {} ; bytes = {}",
-                rate * 100.0,
-                len,
-                t.filter_size()
-            );
-            assert!(rate < 0.02);
-            if rate > 0.0125 {
-                mediocre_filters += 1;
-            } else {
-                good_filters += 1;
-            }
-            len = next_length(len);
-        }
-        assert!(mediocre_filters < good_filters / 5)
+        let mut t = BloomTestImpl::default();
+        test_utils::varying_lengths(t)
     }
 }

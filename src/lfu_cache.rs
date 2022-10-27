@@ -1,10 +1,11 @@
 use indexmap::IndexSet;
 use std::borrow::{Borrow, BorrowMut};
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::collections::hash_map::Iter as HashMapIter;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
+use std::num::NonZeroUsize;
 use std::rc::Rc;
 use thiserror::Error;
 
@@ -104,9 +105,9 @@ where
         }
     }
 
-    pub(crate) fn with_capacity(capacity: usize) -> Self {
+    pub(crate) fn with_capacity(capacity: NonZeroUsize) -> Self {
         Self {
-            capacity,
+            capacity: capacity.get(),
             head: Default::default(),
             items: Default::default(),
         }
@@ -254,10 +255,12 @@ where
         self.head = Default::default()
     }
 
-    pub(crate) fn iter<'a>(&'a self) -> Box<dyn 'a + Iterator<Item = (&K,&V)>> {
-        Box::new(self.items.iter().map(|(key,node)| {
-            (key.as_ref(),&node.data)
-        }))
+    pub(crate) fn iter<'a>(&'a self) -> Box<dyn 'a + Iterator<Item = (&K, &V)>> {
+        Box::new(
+            self.items
+                .iter()
+                .map(|(key, node)| (key.as_ref(), &node.data)),
+        )
     }
 
     pub(crate) fn freq_table(&self) -> BTreeMap<usize, &IndexSet<Rc<K>>> {
@@ -294,6 +297,7 @@ mod test {
     #[cfg(test)]
     mod get {
         use crate::lfu_cache::LFUCache;
+        use std::borrow::Borrow;
 
         #[test]
         fn empty() {
@@ -324,7 +328,7 @@ mod test {
 
         #[test]
         fn bounded_alternating_values() {
-            let mut cache = LFUCache::with_capacity(8);
+            let mut cache = LFUCache::with_capacity(8.try_into().unwrap());
             cache.insert(1, 1);
             cache.insert(2, 2);
             for _ in 0..100 {
@@ -366,7 +370,7 @@ mod test {
 
         #[test]
         fn insert_bounded() {
-            let mut cache = LFUCache::with_capacity(20);
+            let mut cache = LFUCache::with_capacity(20.try_into().unwrap());
 
             for i in 0..100 {
                 cache.insert(i, i + 100);
@@ -375,7 +379,7 @@ mod test {
 
         #[test]
         fn insert_returns_evicted() {
-            let mut cache = LFUCache::with_capacity(1);
+            let mut cache = LFUCache::with_capacity(20.try_into().unwrap());
             assert_eq!(cache.insert(1, 2), None);
             for _ in 0..10 {
                 assert_eq!(cache.insert(3, 4), Some(2));
@@ -592,6 +596,52 @@ mod test {
             for i in 0..10 {
                 assert!(cache.get(&i).is_none());
             }
+        }
+
+        #[test]
+        fn frequecy_halving() {
+            let mut cache = LFUCache::new();
+            cache.insert(1, 2);
+            cache.insert(3, 4);
+            cache.insert(5, 6);
+            cache.insert(7, 8);
+            cache.insert(9, 10);
+            cache.insert(11, 12);
+
+            cache.get(&1);
+            cache.get(&1);
+            cache.get(&5);
+            cache.get(&5);
+            cache.get(&11);
+            cache.get(&11);
+
+            cache.get(&7);
+            cache.get(&7);
+            cache.get(&7);
+            cache.get(&7);
+            cache.get(&9);
+            cache.get(&9);
+            cache.get(&9);
+            cache.get(&9);
+
+
+            //
+            // println!("{:?}", cache.frequencies());
+            // cache.halve_freq_counts();
+            // println!("{:?}", cache.freq_table());
+            // cache.halve_freq_counts();
+            // println!("{:?}", cache.freq_table());
+
+            // assert_eq!(cache.frequencies(), vec![0, 1]);
+            // assert_eq!(cache.len(), 6);
+            //
+            // cache.remove(&7);
+            // assert!(cache.get(&9).is_some());
+            // assert!(cache.get(&11).is_some());
+            //
+            // cache.remove(&1);
+            // assert!(cache.get(&3).is_some());
+            // assert!(cache.get(&5).is_some());
         }
     }
 }

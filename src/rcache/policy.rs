@@ -1,6 +1,6 @@
 use crate::rcache::bloom::Bloom;
-use crate::rcache::ring;
 use crate::rcache::cm_sketch::CMSketch;
+use crate::rcache::ring;
 use crate::Error;
 use crossbeam::channel::{bounded, select, unbounded, Receiver, Select, Sender};
 use parking_lot::Mutex;
@@ -147,8 +147,6 @@ impl Policy for DefaultPolicy {
             return (None, true);
         }
 
-
-
         // incHits is the hit count for the incoming item.
         let inc_hits = p.admit.estimate(key);
         // sample is the eviction candidate pool to be filled via random sampling.
@@ -193,7 +191,7 @@ impl Policy for DefaultPolicy {
             room = p.evict.room_left(cost);
         }
         // Add Key and Cost to sample
-        p.evict.add(key,cost);
+        p.evict.add(key, cost);
         return (Some(victims), true);
     }
 

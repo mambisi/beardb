@@ -1,5 +1,9 @@
+use crate::rcache::policy::Policy;
+use crate::rcache::store::{CachedItem, Store};
 use crate::rcache::ttl::{clean_bucket, ExpirationMap};
+use crate::rcache::utils::{is_time_zero, utc_zero};
 use crate::rcache::{Entry, EntryFlag, ItemCallBackFn};
+use arrayvec::ArrayVec;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -7,35 +11,37 @@ use std::fmt::Debug;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use arrayvec::ArrayVec;
-use crate::rcache::policy::Policy;
-use crate::rcache::store::Store;
-use crate::rcache::utils::{is_time_zero, utc_zero};
 
-const NUM_SHARDS : u64 = 256;
+const NUM_SHARDS: u64 = 256;
 
-pub(crate) struct ShardedMap<V> where V : Clone + Debug {
-    shards : ArrayVec<LockedMap<V>, {NUM_SHARDS as usize}>,
-    em : Arc<ExpirationMap<V>>
+pub(crate) struct ShardedMap<V>
+where
+    V: CachedItem,
+{
+    shards: ArrayVec<LockedMap<V>, { NUM_SHARDS as usize }>,
+    em: Arc<ExpirationMap<V>>,
 }
 
-impl<V> ShardedMap<V> where V : Clone + Debug {
+impl<V> ShardedMap<V>
+where
+    V: CachedItem,
+{
     fn new() -> Self {
         let em = Arc::new(ExpirationMap::new());
-        let mut shards : ArrayVec<LockedMap<V>, {NUM_SHARDS as usize}> = ArrayVec::new();
+        let mut shards: ArrayVec<LockedMap<V>, { NUM_SHARDS as usize }> = ArrayVec::new();
         for shard in shards.iter_mut() {
             shard.em = em.clone();
         }
-        Self {
-            shards,
-            em
-        }
+        Self { shards, em }
     }
 }
 
-impl<V> Store<V> for ShardedMap<V> where V : Clone + Debug {
+impl<V> Store<V> for ShardedMap<V>
+where
+    V: CachedItem,
+{
     fn get(&self, key: u64, conflict: u64) -> Option<V> {
-        self.shards[(key % NUM_SHARDS) as usize].get(key,conflict)
+        self.shards[(key % NUM_SHARDS) as usize].get(key, conflict)
     }
 
     fn set(&self, entry: Entry<V>) {
@@ -72,7 +78,7 @@ impl<V> Store<V> for ShardedMap<V> where V : Clone + Debug {
 
             let cost = policy.cost(&key);
             policy.remove(&key);
-            if let Some((_,value)) = self.remove(key, conflict) {
+            if let Some((_, value)) = self.remove(key, conflict) {
                 if let Some(on_evict) = on_evict.as_ref() {
                     on_evict(&Entry {
                         flag: EntryFlag::Delete,
@@ -84,7 +90,6 @@ impl<V> Store<V> for ShardedMap<V> where V : Clone + Debug {
                     })
                 }
             };
-
         }
     }
 
@@ -95,15 +100,19 @@ impl<V> Store<V> for ShardedMap<V> where V : Clone + Debug {
     }
 }
 
-
-
 #[derive(Debug)]
-struct LockedMap<V> where V : Clone + Debug {
+struct LockedMap<V>
+where
+    V: CachedItem,
+{
     data: RwLock<HashMap<u64, Entry<V>>>,
     em: Arc<ExpirationMap<V>>,
 }
 
-impl<V> LockedMap<V> where V : Clone + Debug   {
+impl<V> LockedMap<V>
+where
+    V: CachedItem,
+{
     fn new(em: Arc<ExpirationMap<V>>) -> Self {
         Self {
             data: Default::default(),
@@ -141,10 +150,10 @@ impl<V> LockedMap<V> where V : Clone + Debug   {
 
     fn expiration(&self, key: u64) -> DateTime<Utc> {
         let data = self.data.read();
-        data.get(&key).map(|data|data.exp).unwrap_or_else(utc_zero)
+        data.get(&key).map(|data| data.exp).unwrap_or_else(utc_zero)
     }
 
-    fn remove(&self, key: u64, conflict: u64) -> Option<(u64,V)> {
+    fn remove(&self, key: u64, conflict: u64) -> Option<(u64, V)> {
         let mut data = self.data.write();
         let entry = data.get(&key)?;
         if conflict != 0 && (conflict != entry.conflict) {
@@ -153,10 +162,8 @@ impl<V> LockedMap<V> where V : Clone + Debug   {
         if !is_time_zero(&entry.exp) {
             self.em.remove(key, entry.exp);
         }
-        let entry= data.remove(&key);
-        entry.map(|entry| {
-            (entry.conflict, entry.value.clone())
-        })
+        let entry = data.remove(&key);
+        entry.map(|entry| (entry.conflict, entry.value.clone()))
     }
 
     fn update(&self, new_entry: Entry<V>) -> Option<V> {
@@ -165,11 +172,10 @@ impl<V> LockedMap<V> where V : Clone + Debug   {
         if new_entry.conflict != 0 && (new_entry.conflict != entry.conflict) {
             return None;
         }
-        self.em.update(new_entry.key, new_entry.conflict, entry.exp, new_entry.exp);
+        self.em
+            .update(new_entry.key, new_entry.conflict, entry.exp, new_entry.exp);
         let entry = data.insert(new_entry.key, new_entry.clone());
-        entry.map(|v| {
-            v.value
-        })
+        entry.map(|v| v.value)
     }
 
     fn clear(&self, callback: ItemCallBackFn<V>) {

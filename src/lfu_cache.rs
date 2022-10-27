@@ -264,7 +264,7 @@ where
     }
 
     pub(crate) fn freq_table(&self) -> BTreeMap<usize, &IndexSet<Rc<K>>> {
-        let mut map : BTreeMap<usize, &IndexSet<Rc<K>>> = BTreeMap::new();
+        let mut map: BTreeMap<usize, &IndexSet<Rc<K>>> = BTreeMap::new();
         // SAFETY: has exclusive reference to self
         unsafe {
             let mut node = &(*self.head.as_ref().as_ptr()).next;
@@ -623,7 +623,6 @@ mod test {
             cache.get(&9);
             cache.get(&9);
             cache.get(&9);
-
 
             //
             // println!("{:?}", cache.frequencies());

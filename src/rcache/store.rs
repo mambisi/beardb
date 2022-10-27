@@ -4,9 +4,11 @@ use chrono::{DateTime, Utc};
 use std::fmt::Debug;
 use std::rc::Rc;
 
+pub(crate) trait CachedItem: Clone {}
+
 pub(crate) trait Store<V>
 where
-    V: Clone + Debug,
+    V: CachedItem,
 {
     fn get(&self, key: u64, conflict: u64) -> Option<V>;
     fn set(&self, entry: Entry<V>);

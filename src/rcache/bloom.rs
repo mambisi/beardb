@@ -1,8 +1,8 @@
 #![warn(non_camel_case_types, non_upper_case_globals, unused_qualifications)]
 #![allow(clippy::unreadable_literal, clippy::bool_comparison)]
 
-use std::cmp;
 use bit_vec::BitVec;
+use std::cmp;
 use std::marker::PhantomData;
 
 /// Bloom filter structure
@@ -34,7 +34,7 @@ impl Bloom {
     fn compute_bitmap_size(items_count: usize, fp_p: f64) -> usize {
         assert!(items_count > 0);
         if fp_p > 1.0 {
-            return fp_p as usize
+            return fp_p as usize;
         }
         let log2 = std::f64::consts::LN_2;
         let log2_2 = log2 * log2;
@@ -42,8 +42,7 @@ impl Bloom {
     }
 
     /// Record the presence of an item.
-    pub fn set(&mut self, hash: u64)
-    {
+    pub fn set(&mut self, hash: u64) {
         for _ in 0..self.k_num {
             let bit_offset = (hash % self.bitmap_bits) as usize;
             self.bit_vec.set(bit_offset, true);
@@ -52,8 +51,7 @@ impl Bloom {
 
     /// Check if an item is present in the set.
     /// There can be false positives, but no false negatives.
-    pub fn check(&self, hash: &u64) -> bool
-    {
+    pub fn check(&self, hash: &u64) -> bool {
         for _ in 0..self.k_num {
             let bit_offset = (hash % self.bitmap_bits) as usize;
             if self.bit_vec.get(bit_offset).unwrap() == false {
@@ -65,8 +63,7 @@ impl Bloom {
 
     /// Record the presence of an item in the set,
     /// and return the previous state of this item.
-    pub fn check_and_set(&mut self, item: u64) -> bool
-    {
+    pub fn check_and_set(&mut self, item: u64) -> bool {
         let mut found = true;
         for _ in 0..self.k_num {
             let bit_offset = (item % self.bitmap_bits) as usize;
@@ -98,7 +95,6 @@ impl Bloom {
         self.k_num
     }
 
-
     #[allow(dead_code)]
     fn optimal_k_num(bitmap_bits: u64, items_count: usize) -> u32 {
         let m = bitmap_bits as f64;
@@ -115,10 +111,10 @@ impl Bloom {
 
 #[cfg(test)]
 mod test {
-    use xxhash_rust::xxh3::xxh3_64;
     use crate::rcache::bloom::Bloom;
     use crate::test_utils;
     use crate::test_utils::BloomTest;
+    use xxhash_rust::xxh3::xxh3_64;
 
     const N: usize = 1 << 16;
 
@@ -131,7 +127,7 @@ mod test {
         fn default() -> Self {
             Self {
                 bloom: Bloom::new(N * 10, 7.0),
-                keys: vec![]
+                keys: vec![],
             }
         }
     }
@@ -176,5 +172,4 @@ mod test {
         let mut t = BloomTestImpl::default();
         test_utils::small(t)
     }
-
 }

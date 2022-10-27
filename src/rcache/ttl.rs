@@ -1,5 +1,5 @@
 use crate::rcache::policy::Policy;
-use crate::rcache::store::Store;
+use crate::rcache::store::{CachedItem, Store};
 use crate::rcache::utils::{is_time_zero, utc_zero};
 use crate::rcache::{Entry, EntryFlag, ItemCallBackFn};
 use chrono::{DateTime, Utc};
@@ -28,7 +28,10 @@ pub(crate) struct ExpirationMap<V> {
     marker_: PhantomData<V>,
 }
 
-impl<V> ExpirationMap<V> where V : Clone + Debug  {
+impl<V> ExpirationMap<V>
+where
+    V: CachedItem,
+{
     pub(crate) fn new() -> Self {
         Self {
             buckets: Default::default(),
@@ -90,5 +93,4 @@ impl<V> ExpirationMap<V> where V : Clone + Debug  {
         let mut buckets = self.buckets.write();
         self.remove_(&mut buckets, key, exp);
     }
-
 }

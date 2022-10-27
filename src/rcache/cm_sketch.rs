@@ -1,6 +1,6 @@
+use arrayvec::ArrayVec;
 use rand::RngCore;
 use std::num::{NonZeroI64, NonZeroU64};
-use arrayvec::ArrayVec;
 
 const CM_DEPTH: usize = 4;
 type CMRow = Box<[u8]>;

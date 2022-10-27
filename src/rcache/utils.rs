@@ -1,7 +1,7 @@
-use std::time::UNIX_EPOCH;
 use chrono::{DateTime, Utc};
+use std::time::UNIX_EPOCH;
 
-pub(crate) fn is_time_zero(t : &DateTime<Utc>) -> bool {
+pub(crate) fn is_time_zero(t: &DateTime<Utc>) -> bool {
     t.eq(&utc_zero())
 }
 

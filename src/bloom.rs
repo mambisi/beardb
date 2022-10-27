@@ -166,7 +166,6 @@ mod test {
             self.filter.len()
         }
 
-
         fn build(&mut self) {
             let mut key_slices = Vec::new();
             for key in self.keys.iter() {

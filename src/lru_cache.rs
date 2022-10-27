@@ -17,7 +17,7 @@ impl<K, V> LRUCache<K, V> {
         Self {
             queue: VecDeque::from(vec![HashSet::new(); 3]),
             lookup: HashMap::with_capacity(capacity.get()),
-            capacity: capacity.get()
+            capacity: capacity.get(),
         }
     }
 }
@@ -49,7 +49,6 @@ where
         self.lookup.insert(key.clone(), value);
         head.insert(key);
         self.queue.push_front(head)
-
     }
 
     pub(crate) fn get(&mut self, key: &K) -> Option<&V> {
@@ -67,7 +66,6 @@ where
         Some(value)
     }
 }
-
 
 #[test]
 fn basic() {

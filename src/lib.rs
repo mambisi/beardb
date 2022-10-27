@@ -14,18 +14,18 @@ mod error;
 mod iter;
 mod lfu_cache;
 mod log;
+mod lru_cache;
 mod memtable;
 mod memtable_cache;
 mod metadata;
+mod rcache;
 mod skiplist;
 mod table;
 mod table_builder;
 mod table_index;
-mod types;
-mod lru_cache;
-mod rcache;
 #[cfg(test)]
 mod test_utils;
+mod types;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

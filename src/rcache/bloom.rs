@@ -116,7 +116,7 @@ impl Bloom {
 #[cfg(test)]
 mod test {
     use xxhash_rust::xxh3::xxh3_64;
-    use crate::rcache::bloom_filter::Bloom;
+    use crate::rcache::bloom::Bloom;
     use crate::test_utils;
     use crate::test_utils::BloomTest;
 

@@ -1,7 +1,6 @@
-use crate::rcache::bloom_filter::Bloom;
+use crate::rcache::bloom::Bloom;
 use crate::rcache::ring;
-use crate::rcache::sketch::CMSketch;
-use crate::rcache::store::StoreItem;
+use crate::rcache::cm_sketch::CMSketch;
 use crate::Error;
 use crossbeam::channel::{bounded, select, unbounded, Receiver, Select, Sender};
 use parking_lot::Mutex;

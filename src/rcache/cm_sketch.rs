@@ -1,5 +1,6 @@
 use rand::RngCore;
 use std::num::{NonZeroI64, NonZeroU64};
+use arrayvec::ArrayVec;
 
 const CM_DEPTH: usize = 4;
 type CMRow = Box<[u8]>;
@@ -10,8 +11,8 @@ fn new_cm_row(num_counters: u64) -> CMRow {
 
 #[derive(Debug)]
 pub(crate) struct CMSketch {
-    rows: Box<[CMRow; CM_DEPTH]>,
-    seed: [u64; CM_DEPTH],
+    rows: ArrayVec<CMRow, CM_DEPTH>,
+    seed: ArrayVec<u64, CM_DEPTH>,
     mask: u64,
 }
 
@@ -19,11 +20,8 @@ impl CMSketch {
     pub(crate) fn new(num_counters: u64) -> Self {
         let num_counters = next2power(num_counters as i64) as u64;
         let mut sketch = Self {
-            rows: vec![vec![].into_boxed_slice(); CM_DEPTH]
-                .into_boxed_slice()
-                .try_into()
-                .unwrap(),
-            seed: [0; CM_DEPTH],
+            rows: ArrayVec::new_const(),
+            seed: ArrayVec::new_const(),
             mask: num_counters - 1,
         };
         let mut rand = rand::thread_rng();
@@ -110,23 +108,4 @@ fn next2power(mut x: i64) -> i64 {
     x |= x >> 32;
     x += 1;
     x
-}
-
-#[cfg(test)]
-mod test {
-    use crate::rcache::sketch::CMSketch;
-    use std::num::{NonZeroI64, NonZeroU64};
-    use xxhash_rust::xxh3::xxh3_64;
-
-    #[test]
-    fn test_sketch() {
-        let mut sketch = CMSketch::new(10);
-        println!("{:?}", sketch);
-        sketch.increment(xxh3_64(b"abc"));
-        println!("{}", sketch.estimate(&xxh3_64(b"abc")));
-        println!("{:?}", sketch);
-        sketch.increment(xxh3_64(b"abc"));
-        println!("{}", sketch.estimate(&xxh3_64(b"abc")));
-        println!("{:?}", sketch);
-    }
 }

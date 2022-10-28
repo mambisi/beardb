@@ -1,5 +1,5 @@
 use parking_lot::Mutex;
-use std::mem::{ManuallyDrop, forget};
+use std::mem::{forget, ManuallyDrop};
 use std::ops::{Deref, DerefMut};
 
 pub type Stack<T> = Vec<T>;
@@ -11,8 +11,8 @@ pub struct Pool<T> {
 impl<T> Pool<T> {
     #[inline]
     pub fn new<F>(cap: usize, init: F) -> Pool<T>
-        where
-            F: Fn() -> T,
+    where
+        F: Fn() -> T,
     {
         let mut objects = Stack::new();
 
@@ -106,8 +106,8 @@ impl<'a, T> Drop for Reusable<'a, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::mem::drop;
     use crate::rcache::pool::{Pool, Reusable};
+    use std::mem::drop;
 
     #[test]
     fn detach() {

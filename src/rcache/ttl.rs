@@ -1,5 +1,5 @@
 use crate::rcache::policy::Policy;
-use crate::rcache::store::{Store};
+use crate::rcache::store::Store;
 use crate::rcache::utils::{is_time_zero, utc_zero};
 use crate::rcache::{Entry, EntryFlag, ItemCallBackFn};
 use chrono::{DateTime, Utc};
@@ -28,8 +28,7 @@ pub(crate) struct ExpirationMap<V> {
     marker_: PhantomData<V>,
 }
 
-impl<V> ExpirationMap<V>
-{
+impl<V> ExpirationMap<V> {
     pub(crate) fn new() -> Self {
         Self {
             buckets: Default::default(),

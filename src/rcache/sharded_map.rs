@@ -1,12 +1,12 @@
-use std::borrow::Borrow;
 use crate::rcache::policy::Policy;
-use crate::rcache::store::{ Store};
+use crate::rcache::store::Store;
 use crate::rcache::ttl::{clean_bucket, ExpirationMap};
 use crate::rcache::utils::{is_time_zero, utc_zero};
-use crate::rcache::{Entry, EntryFlag, ItemCallBackFn};
+use crate::rcache::{CacheItem, Entry, EntryFlag, ItemCallBackFn};
 use arrayvec::ArrayVec;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::rc::Rc;
@@ -15,16 +15,17 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const NUM_SHARDS: u64 = 256;
 
-pub(crate) struct ShardedMap<V>
-{
+pub(crate) struct ShardedMap<V: CacheItem> {
     shards: ArrayVec<LockedMap<V>, { NUM_SHARDS as usize }>,
-    em: Rc<ExpirationMap<V>>,
+    em: Arc<ExpirationMap<V>>,
 }
 
 impl<V> ShardedMap<V>
+where
+    V: CacheItem,
 {
     pub(crate) fn new() -> Self {
-        let em = Rc::new(ExpirationMap::new());
+        let em = Arc::new(ExpirationMap::new());
         let mut shards: ArrayVec<LockedMap<V>, { NUM_SHARDS as usize }> = ArrayVec::new();
         for shard in shards.iter_mut() {
             shard.em = em.clone();
@@ -33,9 +34,11 @@ impl<V> ShardedMap<V>
     }
 }
 
-impl< V> Store<V> for ShardedMap<V>
+impl<V> Store<V> for ShardedMap<V>
+where
+    V: CacheItem,
 {
-    fn get(&self, key: u64, conflict: u64) -> Option<Arc<V>> {
+    fn get(&self, key: u64, conflict: u64) -> Option<V> {
         self.shards[(key % NUM_SHARDS) as usize].get(key, conflict)
     }
 
@@ -47,11 +50,11 @@ impl< V> Store<V> for ShardedMap<V>
         self.shards[(key % NUM_SHARDS) as usize].expiration(key)
     }
 
-    fn remove(&self, key: u64, conflict: u64) -> Option<(u64, Arc<V>)> {
+    fn remove(&self, key: u64, conflict: u64) -> Option<(u64, V)> {
         self.shards[(key % NUM_SHARDS) as usize].remove(key, conflict)
     }
 
-    fn update(&self, entry: Entry<V>) -> Option<Arc<V>> {
+    fn update(&self, entry: Entry<V>) -> Option<V> {
         self.shards[(entry.key % NUM_SHARDS) as usize].update(entry)
     }
 
@@ -96,15 +99,16 @@ impl< V> Store<V> for ShardedMap<V>
 }
 
 #[derive(Debug)]
-struct LockedMap<V>
-{
+struct LockedMap<V: CacheItem> {
     data: RwLock<HashMap<u64, Entry<V>>>,
-    em: Rc<ExpirationMap<V>>,
+    em: Arc<ExpirationMap<V>>,
 }
 
 impl<V> LockedMap<V>
+where
+    V: CacheItem,
 {
-    fn new(em: Rc<ExpirationMap<V>>) -> Self {
+    fn new(em: Arc<ExpirationMap<V>>) -> Self {
         Self {
             data: Default::default(),
             em,
@@ -124,7 +128,7 @@ impl<V> LockedMap<V>
         data.insert(entry.key, entry);
     }
 
-    fn get(&self, key: u64, conflict: u64) -> Option<Arc<V>> {
+    fn get(&self, key: u64, conflict: u64) -> Option<V> {
         let data = self.data.read();
         let entry = data.get(&key)?;
 
@@ -144,7 +148,7 @@ impl<V> LockedMap<V>
         data.get(&key).map(|data| data.exp).unwrap_or_else(utc_zero)
     }
 
-    fn remove(&self, key: u64, conflict: u64) -> Option<(u64, Arc<V>)> {
+    fn remove(&self, key: u64, conflict: u64) -> Option<(u64, V)> {
         let mut data = self.data.write();
         let entry = data.get(&key)?;
         if conflict != 0 && (conflict != entry.conflict) {
@@ -157,7 +161,7 @@ impl<V> LockedMap<V>
         entry.map(|entry| (entry.conflict, entry.value.clone()))
     }
 
-    fn update(&self, new_entry: Entry<V>) -> Option<Arc<V>> {
+    fn update(&self, new_entry: Entry<V>) -> Option<V> {
         let mut data = self.data.write();
         let entry = data.get(&new_entry.key)?;
         if new_entry.conflict != 0 && (new_entry.conflict != entry.conflict) {

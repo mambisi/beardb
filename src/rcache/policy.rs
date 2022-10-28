@@ -84,7 +84,7 @@ pub(crate) struct DefaultPolicy {
 }
 
 impl DefaultPolicy {
-    fn new(num_counters: u64, max_cost: i64) -> Self {
+    pub(crate) fn new(num_counters: u64, max_cost: i64) -> Self {
         let is_closed = Arc::new(AtomicBool::new(false));
         let max_cost = Arc::new(AtomicI64::new(max_cost));
         let inner = Arc::new(Mutex::new(Inner {

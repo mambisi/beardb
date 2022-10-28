@@ -1,5 +1,6 @@
+use std::borrow::Borrow;
 use crate::rcache::policy::Policy;
-use crate::rcache::store::{CachedItem, Store};
+use crate::rcache::store::{ Store};
 use crate::rcache::ttl::{clean_bucket, ExpirationMap};
 use crate::rcache::utils::{is_time_zero, utc_zero};
 use crate::rcache::{Entry, EntryFlag, ItemCallBackFn};
@@ -15,19 +16,15 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 const NUM_SHARDS: u64 = 256;
 
 pub(crate) struct ShardedMap<V>
-where
-    V: CachedItem,
 {
     shards: ArrayVec<LockedMap<V>, { NUM_SHARDS as usize }>,
-    em: Arc<ExpirationMap<V>>,
+    em: Rc<ExpirationMap<V>>,
 }
 
 impl<V> ShardedMap<V>
-where
-    V: CachedItem,
 {
-    fn new() -> Self {
-        let em = Arc::new(ExpirationMap::new());
+    pub(crate) fn new() -> Self {
+        let em = Rc::new(ExpirationMap::new());
         let mut shards: ArrayVec<LockedMap<V>, { NUM_SHARDS as usize }> = ArrayVec::new();
         for shard in shards.iter_mut() {
             shard.em = em.clone();
@@ -36,11 +33,9 @@ where
     }
 }
 
-impl<V> Store<V> for ShardedMap<V>
-where
-    V: CachedItem,
+impl< V> Store<V> for ShardedMap<V>
 {
-    fn get(&self, key: u64, conflict: u64) -> Option<V> {
+    fn get(&self, key: u64, conflict: u64) -> Option<Arc<V>> {
         self.shards[(key % NUM_SHARDS) as usize].get(key, conflict)
     }
 
@@ -52,15 +47,15 @@ where
         self.shards[(key % NUM_SHARDS) as usize].expiration(key)
     }
 
-    fn remove(&self, key: u64, conflict: u64) -> Option<(u64, V)> {
+    fn remove(&self, key: u64, conflict: u64) -> Option<(u64, Arc<V>)> {
         self.shards[(key % NUM_SHARDS) as usize].remove(key, conflict)
     }
 
-    fn update(&self, entry: Entry<V>) -> Option<V> {
+    fn update(&self, entry: Entry<V>) -> Option<Arc<V>> {
         self.shards[(entry.key % NUM_SHARDS) as usize].update(entry)
     }
 
-    fn cleanup<P: Policy>(&self, policy: P, on_evict: ItemCallBackFn<V>) {
+    fn cleanup(&self, policy: Arc<dyn Policy>, on_evict: ItemCallBackFn<V>) {
         let mut buckets = self.em.buckets.write();
         let now = Utc::now();
         let bucket_id = clean_bucket(Utc::now());
@@ -79,16 +74,16 @@ where
             let cost = policy.cost(&key);
             policy.remove(&key);
             if let Some((_, value)) = self.remove(key, conflict) {
-                if let Some(on_evict) = on_evict.as_ref() {
-                    on_evict(&Entry {
-                        flag: EntryFlag::Delete,
-                        key,
-                        conflict,
-                        value,
-                        cost,
-                        exp: utc_zero(),
-                    })
-                }
+                // if let Some(on_evict) = on_evict.as_ref() {
+                //     on_evict(&Entry {
+                //         flag: EntryFlag::Delete,
+                //         key,
+                //         conflict,
+                //         value,
+                //         cost,
+                //         exp: utc_zero(),
+                //     })
+                // }
             };
         }
     }
@@ -102,18 +97,14 @@ where
 
 #[derive(Debug)]
 struct LockedMap<V>
-where
-    V: CachedItem,
 {
     data: RwLock<HashMap<u64, Entry<V>>>,
-    em: Arc<ExpirationMap<V>>,
+    em: Rc<ExpirationMap<V>>,
 }
 
 impl<V> LockedMap<V>
-where
-    V: CachedItem,
 {
-    fn new(em: Arc<ExpirationMap<V>>) -> Self {
+    fn new(em: Rc<ExpirationMap<V>>) -> Self {
         Self {
             data: Default::default(),
             em,
@@ -133,7 +124,7 @@ where
         data.insert(entry.key, entry);
     }
 
-    fn get(&self, key: u64, conflict: u64) -> Option<V> {
+    fn get(&self, key: u64, conflict: u64) -> Option<Arc<V>> {
         let data = self.data.read();
         let entry = data.get(&key)?;
 
@@ -153,7 +144,7 @@ where
         data.get(&key).map(|data| data.exp).unwrap_or_else(utc_zero)
     }
 
-    fn remove(&self, key: u64, conflict: u64) -> Option<(u64, V)> {
+    fn remove(&self, key: u64, conflict: u64) -> Option<(u64, Arc<V>)> {
         let mut data = self.data.write();
         let entry = data.get(&key)?;
         if conflict != 0 && (conflict != entry.conflict) {
@@ -166,7 +157,7 @@ where
         entry.map(|entry| (entry.conflict, entry.value.clone()))
     }
 
-    fn update(&self, new_entry: Entry<V>) -> Option<V> {
+    fn update(&self, new_entry: Entry<V>) -> Option<Arc<V>> {
         let mut data = self.data.write();
         let entry = data.get(&new_entry.key)?;
         if new_entry.conflict != 0 && (new_entry.conflict != entry.conflict) {
@@ -174,7 +165,7 @@ where
         }
         self.em
             .update(new_entry.key, new_entry.conflict, entry.exp, new_entry.exp);
-        let entry = data.insert(new_entry.key, new_entry.clone());
+        let entry = data.insert(new_entry.key, new_entry);
         entry.map(|v| v.value)
     }
 

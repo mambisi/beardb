@@ -77,16 +77,16 @@ where
             let cost = policy.cost(&key);
             policy.remove(&key);
             if let Some((_, value)) = self.remove(key, conflict) {
-                // if let Some(on_evict) = on_evict.as_ref() {
-                //     on_evict(&Entry {
-                //         flag: EntryFlag::Delete,
-                //         key,
-                //         conflict,
-                //         value,
-                //         cost,
-                //         exp: utc_zero(),
-                //     })
-                // }
+                if let Some(on_evict) = on_evict.as_ref() {
+                    on_evict(&Entry {
+                        flag: EntryFlag::Delete,
+                        key,
+                        conflict,
+                        value,
+                        cost,
+                        exp: utc_zero(),
+                    })
+                }
             };
         }
     }

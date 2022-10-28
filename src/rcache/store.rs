@@ -1,5 +1,5 @@
 use crate::rcache::policy::Policy;
-use crate::rcache::{CacheItem, Entry, ItemCallBackFn};
+use crate::rcache::{Entry, ItemCallBackFn};
 use chrono::{DateTime, Utc};
 use std::fmt::Debug;
 use std::rc::Rc;
@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 pub(crate) trait Store<V>
 where
-    V: CacheItem,
+    V: Clone,
 {
     fn get(&self, key: u64, conflict: u64) -> Option<V>;
     fn set(&self, entry: Entry<V>);

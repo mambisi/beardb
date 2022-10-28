@@ -2,13 +2,13 @@ use crate::rcache::bloom::Bloom;
 use crate::rcache::cm_sketch::CMSketch;
 use crate::rcache::ring;
 use crate::Error;
-use crossbeam::channel::{bounded, select, unbounded, Receiver, Select, Sender};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, SyncSender};
 use std::thread::JoinHandle;
 
 const LFU_SAMPLE: usize = 5;
@@ -54,7 +54,6 @@ pub(crate) struct Item {
 fn process_op(
     close: Arc<AtomicBool>,
     items_recv: Receiver<Vec<u64>>,
-    stop_recv: Receiver<()>,
     p: Arc<Mutex<Inner>>,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || loop {
@@ -67,17 +66,12 @@ fn process_op(
             p.admit.push(items);
             println!("Admited")
         }
-        if let Ok(_) = stop_recv.try_recv() {
-            println!("STOP PROCESSING");
-            break;
-        }
     })
 }
 
 pub(crate) struct DefaultPolicy {
     inner: Arc<Mutex<Inner>>,
-    items_channel: Sender<Vec<u64>>,
-    stop_channel: Sender<()>,
+    items_channel: SyncSender<Vec<u64>>,
     is_closed: Arc<AtomicBool>,
     processor: JoinHandle<()>,
     max_cost: Arc<AtomicI64>,
@@ -91,24 +85,24 @@ impl DefaultPolicy {
             admit: TinyLFU::new(num_counters),
             evict: SampledLFU::new(max_cost.clone()),
         }));
-        let (items_channel, receiver) = bounded(3);
-        let (stop_channel, stop_rx) = unbounded();
-        let processor = process_op(is_closed.clone(), receiver, stop_rx, inner.clone());
-
+        let (items_channel, receiver) = std::sync::mpsc::sync_channel(3);
+        let processor = process_op(is_closed.clone(), receiver, inner.clone());
         Self {
             inner,
             items_channel,
-            stop_channel,
             is_closed,
             processor,
             max_cost,
         }
     }
+    pub(crate) fn close(&self) {
+        self.is_closed.store(true, Ordering::Release);
+    }
 }
 
 impl ring::Consumer for DefaultPolicy {
     fn push(&self, keys: Vec<u64>) -> bool {
-        let closed = self.is_closed.load(Ordering::Relaxed);
+        let closed = self.is_closed.load(Ordering::Acquire);
         if closed {
             return false;
         }
@@ -214,7 +208,6 @@ impl Policy for DefaultPolicy {
     }
 
     fn close(&self) {
-        let _ = self.stop_channel.send(());
         self.is_closed.store(true, Ordering::Release);
     }
 
@@ -383,7 +376,7 @@ mod test {
             assert_eq!(2, p.admit.estimate(2));
             assert_eq!(1, p.admit.estimate(1));
         }
-        assert!(policy.stop_channel.send(()).is_ok());
+        policy.close();
         policy.items_channel.send(vec![3, 3, 3]);
         std::thread::sleep(Duration::from_millis(10));
         {

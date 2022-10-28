@@ -10,10 +10,15 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::ops::Add;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use xxhash_rust::const_xxh64::xxh64;
 use xxhash_rust::xxh3::Xxh3;
+use crate::Error;
+use crate::rcache::cache_key::CacheKey;
 
 mod bloom;
 mod cm_sketch;
@@ -24,8 +29,11 @@ mod sharded_map;
 mod store;
 mod ttl;
 mod utils;
+mod cache_key;
 
-pub(crate) trait CacheItem: Send + Clone {}
+// TODO: make it configurable
+const SET_BUF_SIZE: usize = 32 * 1024;
+
 
 #[derive(Debug)]
 pub(crate) enum EntryFlag {
@@ -34,10 +42,24 @@ pub(crate) enum EntryFlag {
     Update,
 }
 
+pub(crate) trait Cost<V>
+where
+    V: Clone,
+{
+    fn cost(&self, entry: &mut Entry<V>);
+}
+
+pub(crate) trait TwoHash64<K>
+where
+    K: Hash,
+{
+    fn hash(&self, key: &K) -> (u64, u64);
+}
+
 #[derive(Debug)]
 pub(crate) struct Entry<V>
 where
-    V: CacheItem,
+    V: Clone,
 {
     flag: EntryFlag,
     key: u64,
@@ -46,51 +68,188 @@ where
     cost: i64,
     exp: DateTime<Utc>,
 }
-type ItemCallBackFn<V> = Arc<Option<Box<dyn 'static + Send + Sync + ItemCallback<V>>>>;
+type ItemCallBackFn<V> = Option<Arc<Box<dyn 'static + Send + Sync + ItemCallback<V>>>>;
+
 pub(crate) trait ItemCallback<V>: Fn(&Entry<V>) {}
 
 impl<F, V> ItemCallback<V> for F where F: Fn(&Entry<V>) {}
 
-pub(crate) struct Config<V>
-where
-    V: CacheItem,
-{
-    on_evict: ItemCallBackFn<V>,
-    on_reject: ItemCallBackFn<V>,
-}
+struct DefaultTwoHasher<K>(PhantomData<K>);
 
-fn hash<K>(key: K) -> (u64, u64)
+impl<K> TwoHash64<K> for DefaultTwoHasher<K>
 where
     K: Hash,
 {
-    let mut default_hasher = DefaultHasher::new();
-    key.hash(&mut default_hasher);
-    let mut xxhasher = Xxh3::new();
-    key.hash(&mut xxhasher);
-    (default_hasher.finish(), xxhasher.finish())
+    fn hash(&self, key: &K) -> (u64, u64) {
+        let mut default_hasher = DefaultHasher::new();
+        key.hash(&mut default_hasher);
+        let mut xxhasher = Xxh3::new();
+        key.hash(&mut xxhasher);
+        (default_hasher.finish(), xxhasher.finish())
+    }
 }
 
-pub(crate) struct Cache<K, V: CacheItem> {
+struct ZeroCost;
+impl<V> Cost<V> for ZeroCost
+where
+    V: Clone,
+{
+    fn cost(&self, entry: &mut Entry<V>){
+        entry.cost = 0;
+    }
+}
+
+impl<V> Default for Config<V>
+where
+    V: Clone,
+{
+    fn default() -> Self {
+        Self {
+            on_evict: None,
+            on_reject: None,
+            num_counters: 1e7 as u64,
+            max_cost: 1 << 20,
+            pool_capacity: 30,
+            get_buffer_size: 64,
+            set_buffer_size: 32 * 1024,
+        }
+    }
+}
+
+pub(crate) struct Config<V>
+where
+    V: Clone,
+{
+    pub(crate) on_evict: ItemCallBackFn<V>,
+    pub(crate) on_reject: ItemCallBackFn<V>,
+    pub(crate) num_counters: u64,
+    pub(crate) max_cost: i64,
+    pub(crate) pool_capacity: usize,
+    pub(crate) get_buffer_size: usize,
+    pub(crate) set_buffer_size: usize,
+}
+
+struct InnerCache<V: Clone> {
     store: Arc<ShardedMap<V>>,
     policy: Arc<DefaultPolicy>,
-    get_buf: Arc<RingBuffer>,
-    marker_: PhantomData<K>,
+    config: Arc<Config<V>>,
 }
 
-impl<K, V> Cache<K, V>
+struct Cache<K, V: Clone, C: Cost<V>> {
+    inner: Arc<InnerCache<V>>,
+    set_buf: SyncSender<Entry<V>>,
+    get_buf: Arc<RingBuffer>,
+    closed: Arc<AtomicBool>,
+    hasher: DefaultTwoHasher<K>,
+    op: JoinHandle<()>,
+    cost: C,
+}
+
+impl<K, V: Clone, C: Cost<V>> Drop for Cache<K,V,C> {
+    fn drop(&mut self) {
+        self.closed.store(true, Ordering::Release)
+    }
+}
+
+impl<K, V, C> Cache<K, V, C>
 where
-    K: Clone + Hash,
-    V: CacheItem,
+    K: CacheKey,
+    V: Clone + Debug + Send + Sync + 'static,
+    C: Cost<V>,
 {
-    fn new() -> Self {
+    pub(crate) fn new(cost : C) -> Cache<K,V,C> {
+        Cache::<K,V,C>::with_config(Config::default(), cost)
+    }
+
+    pub(crate) fn with_config(config: Config<V>, cost: C) -> Self {
+        let closed = Arc::new(AtomicBool::new(false));
+        let config = Arc::new(config);
         let store = Arc::new(ShardedMap::new());
-        let policy = Arc::new(DefaultPolicy::new(1e7 as u64, 1 << 20));
-        let ring = Arc::new(RingBuffer::new(policy.clone(), 30, 64));
-        Self {
+        let policy = Arc::new(DefaultPolicy::new(config.num_counters, config.max_cost));
+        let get_buffer = Arc::new(RingBuffer::new(
+            policy.clone(),
+            config.pool_capacity,
+            config.get_buffer_size,
+        ));
+        let (set_buffer, set_buffer_handler) =
+            std::sync::mpsc::sync_channel(config.set_buffer_size);
+
+        let inner = Arc::new(InnerCache {
             store,
             policy,
-            get_buf: ring,
-            marker_: Default::default(),
+            config,
+        });
+
+        let op = process_items(closed.clone(), set_buffer_handler, inner.clone());
+        Self {
+            inner,
+            set_buf: set_buffer,
+            get_buf: get_buffer,
+            closed,
+            hasher: DefaultTwoHasher(PhantomData::default()),
+            op,
+            cost,
         }
+    }
+
+    pub(crate) fn insert(&self, key : K, value : V) -> crate::Result<()> {
+        let (key,conflict) = key.key_to_hash();
+        let mut entry = Entry {
+            flag: EntryFlag::New,
+            key,
+            conflict,
+            value,
+            cost: 0,
+            exp: Default::default()
+        };
+        self.cost.cost(&mut entry);
+        self.set_buf.send(entry).map_err(|e|{
+            Error::AnyError(Box::new(e))
+        })
+    }
+}
+
+fn process_items<V: Clone + Debug + Send + Sync + 'static>(
+    close: Arc<AtomicBool>,
+    set_buffer_handler: Receiver<Entry<V>>,
+    cache: Arc<InnerCache<V>>,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || loop {
+        let is_closed = close.load(Ordering::Acquire);
+        if is_closed {
+            println!("Closing");
+            break;
+        }
+
+        if let Ok(entry) = set_buffer_handler.try_recv() {
+            println!("Recived {:?}", entry);
+            match entry.flag {
+                EntryFlag::New => {
+                    let (victims, added) = cache.policy.add(entry.key, entry.cost);
+                }
+                EntryFlag::Delete => {}
+                EntryFlag::Update => {}
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod test {
+    use std::time::Duration;
+    use crate::rcache::{Cache, ZeroCost};
+
+    fn wait() {
+        std::thread::sleep(Duration::from_millis(10))
+    }
+
+    #[test]
+    fn basic() {
+        let cache = Cache::new(ZeroCost);
+        cache.insert(3,40).unwrap();
+        wait();
+        let cache = Cache::new(ZeroCost);
+        cache.insert(b"aba",40).unwrap();
+        wait();
     }
 }

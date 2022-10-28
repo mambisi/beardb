@@ -2,7 +2,7 @@ use crate::rcache::policy::Policy;
 use crate::rcache::store::Store;
 use crate::rcache::ttl::{clean_bucket, ExpirationMap};
 use crate::rcache::utils::{is_time_zero, utc_zero};
-use crate::rcache::{CacheItem, Entry, EntryFlag, ItemCallBackFn};
+use crate::rcache::{Cost, Entry, EntryFlag, ItemCallBackFn};
 use arrayvec::ArrayVec;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
@@ -15,14 +15,14 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const NUM_SHARDS: u64 = 256;
 
-pub(crate) struct ShardedMap<V: CacheItem> {
+pub(crate) struct ShardedMap<V: Clone> {
     shards: ArrayVec<LockedMap<V>, { NUM_SHARDS as usize }>,
     em: Arc<ExpirationMap<V>>,
 }
 
 impl<V> ShardedMap<V>
 where
-    V: CacheItem,
+    V: Clone,
 {
     pub(crate) fn new() -> Self {
         let em = Arc::new(ExpirationMap::new());
@@ -36,7 +36,7 @@ where
 
 impl<V> Store<V> for ShardedMap<V>
 where
-    V: CacheItem,
+    V: Clone,
 {
     fn get(&self, key: u64, conflict: u64) -> Option<V> {
         self.shards[(key % NUM_SHARDS) as usize].get(key, conflict)
@@ -99,14 +99,14 @@ where
 }
 
 #[derive(Debug)]
-struct LockedMap<V: CacheItem> {
+struct LockedMap<V: Clone> {
     data: RwLock<HashMap<u64, Entry<V>>>,
     em: Arc<ExpirationMap<V>>,
 }
 
 impl<V> LockedMap<V>
 where
-    V: CacheItem,
+    V: Clone,
 {
     fn new(em: Arc<ExpirationMap<V>>) -> Self {
         Self {

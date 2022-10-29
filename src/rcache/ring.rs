@@ -49,7 +49,7 @@ impl RingBuffer {
         }
     }
 
-    pub(crate) fn push(self, item: u64) {
+    pub(crate) fn push(&self, item: u64) {
         if let Some(mut p) = self.pool.try_pull() {
             p.push(item)
         }

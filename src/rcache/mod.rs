@@ -64,7 +64,7 @@ where
     flag: EntryFlag,
     key: u64,
     conflict: u64,
-    value: V,
+    value: Option<V>,
     cost: i64,
     exp: SystemTime,
 }
@@ -99,14 +99,9 @@ where
     }
 }
 
-impl<V> Default for Config<V>
-where
-    V: Clone,
-{
+impl Default for Config {
     fn default() -> Self {
         Self {
-            on_evict: None,
-            on_reject: None,
             num_counters: 1e7 as u64,
             max_cost: 1 << 20,
             pool_capacity: 30,
@@ -117,113 +112,19 @@ where
     }
 }
 
-pub(crate) struct Config<V>
-where
-    V: Clone,
-{
-    on_evict: ItemCallBackFn<V>,
-    on_reject: ItemCallBackFn<V>,
-    num_counters: u64,
-    max_cost: i64,
-    pool_capacity: usize,
-    get_buffer_size: usize,
-    set_buffer_size: usize,
-    ignore_internal_cost: bool,
-}
-
-impl<V> Config<V>
-where
-    V: Clone,
-{
-    pub(crate) fn on_evict(&self) -> &ItemCallBackFn<V> {
-        &self.on_evict
-    }
-    pub(crate) fn on_reject(&self) -> &ItemCallBackFn<V> {
-        &self.on_reject
-    }
-    pub(crate) fn num_counters(&self) -> u64 {
-        self.num_counters
-    }
-    pub(crate) fn max_cost(&self) -> i64 {
-        self.max_cost
-    }
-    pub(crate) fn pool_capacity(&self) -> usize {
-        self.pool_capacity
-    }
-    pub(crate) fn get_buffer_size(&self) -> usize {
-        self.get_buffer_size
-    }
-    pub(crate) fn set_buffer_size(&self) -> usize {
-        self.set_buffer_size
-    }
-    pub(crate) fn ignore_internal_cost(&self) -> bool {
-        self.ignore_internal_cost
-    }
-}
-
-pub(crate) struct ConfigBuilder<V>
-where
-    V: Clone,
-{
-    config: Config<V>,
-}
-
-impl<V> ConfigBuilder<V>
-where
-    V: Clone,
-{
-    pub(crate) fn with_defaults() -> Self {
-        Self {
-            config: Config::default(),
-        }
-    }
-    pub(crate) fn on_evict(
-        mut self,
-        f: impl ItemCallback<V> + Send + Sync + 'static,
-    ) -> Self {
-        self.config.on_evict = Some(Arc::new(Box::new(f)));
-        self
-    }
-    pub(crate) fn on_reject(
-        mut self,
-        f: impl ItemCallback<V> + Send + Sync + 'static,
-    ) -> Self {
-        self.config.on_reject = Some(Arc::new(Box::new(f)));
-        self
-    }
-    pub(crate) fn num_counters(mut self, num_counters: u64) -> Self {
-        self.config.num_counters = num_counters;
-        self
-    }
-    pub(crate) fn max_cost(mut self, max_cost: i64) -> Self {
-        self.config.max_cost = max_cost;
-        self
-    }
-    pub(crate) fn pool_capacity(mut self, pool_capacity: usize) -> Self {
-        self.config.pool_capacity = pool_capacity;
-        self
-    }
-    pub(crate) fn get_buffer_size(mut self, get_buffer_size: usize) -> Self {
-        self.config.get_buffer_size = get_buffer_size;
-        self
-    }
-    pub(crate) fn set_buffer_size(mut self, set_buffer_size: usize) -> Self {
-        self.config.set_buffer_size = set_buffer_size;
-        self
-    }
-    pub(crate) fn ignore_internal_cost(mut self, ignore_internal_cost: bool) -> Self {
-        self.config.ignore_internal_cost = ignore_internal_cost;
-        self
-    }
-    pub(crate) fn build(self) -> Config<V> {
-        self.config
-    }
+pub(crate) struct Config {
+    pub(crate) num_counters: u64,
+    pub(crate) max_cost: i64,
+    pub(crate) pool_capacity: usize,
+    pub(crate) get_buffer_size: usize,
+    pub(crate) set_buffer_size: usize,
+    pub(crate) ignore_internal_cost: bool,
 }
 
 struct InnerCache<V: Clone> {
     store: Arc<ShardedMap<V>>,
     policy: Arc<DefaultPolicy>,
-    config: Arc<Config<V>>,
+    config: Arc<Config>,
 }
 
 struct Cache<K, V: Clone> {
@@ -245,13 +146,13 @@ impl<K, V: Clone> Drop for Cache<K, V> {
 impl<K, V> Cache<K, V>
 where
     K: CacheKey,
-    V: Clone + Debug + Send + Sync + 'static,
+    V: Clone + Debug + Send + Sync + Default + 'static,
 {
     pub(crate) fn new() -> Cache<K, V> {
         Cache::<K, V>::with_config(Config::default(), ZeroCost)
     }
 
-    pub(crate) fn with_config(config: Config<V>, cost: impl Cost<V> + Sized + 'static) -> Self {
+    pub(crate) fn with_config(config: Config, cost: impl Cost<V> + Sized + 'static) -> Self {
         let closed = Arc::new(AtomicBool::new(false));
         let config = Arc::new(config);
         let store = Arc::new(ShardedMap::new());
@@ -286,16 +187,62 @@ where
         self.insert_with_ttl(key, value, Duration::from_secs(0))
     }
 
+    pub(crate) fn get(&self, key: K) -> Option<V> {
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let (key, conflict) = key.key_to_hash();
+        self.get_buf.push(key);
+        let value = self.inner.store.get(key, conflict);
+        if value.is_some() {
+            // TODO: add Metrics
+        } else {
+            // TODO: add Metrics
+        }
+        value
+    }
+
+    pub(crate) fn remove(&self, key: K) -> crate::Result<()> {
+        if self.closed.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let (key, conflict) = key.key_to_hash();
+        self.get_buf.push(key);
+        let value = self.inner.store.remove(key, conflict);
+        if value.is_some() {
+            // TODO: add Metrics
+        } else {
+            // TODO: add Metrics
+        }
+        self.set_buf
+            .send(Entry {
+                flag: EntryFlag::Delete,
+                key,
+                conflict,
+                value: None,
+                cost: 0,
+                exp: SystemTime::UNIX_EPOCH,
+            })
+            .map_err(|e| Error::AnyError(Box::new(e)))
+    }
+
     pub(crate) fn insert_with_ttl(&self, key: K, value: V, ttl: Duration) -> crate::Result<()> {
         let (key, conflict) = key.key_to_hash();
-        let cost = self.cost.cost(&value);
-        let mut exp = SystemTime::now();
-        exp.add(ttl);
+        let mut cost = self.cost.cost(&value);
+        if !self.inner.config.ignore_internal_cost {
+            cost += std::mem::size_of::<Entry<V>>() as i64;
+        }
+        let mut exp = if ttl.as_secs() > 0 {
+            SystemTime::now().add(ttl)
+        } else {
+            SystemTime::UNIX_EPOCH
+        };
+
         let mut entry = Entry {
             flag: EntryFlag::New,
             key,
             conflict,
-            value,
+            value: Some(value),
             cost,
             exp,
         };
@@ -311,18 +258,14 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
     cache: Arc<InnerCache<V>>,
 ) -> JoinHandle<()> {
     let ticker = tick(Duration::from_secs(BUCKET_DURATION_SECS as u64).div(2));
-    let on_evict = |e : &Entry<V>| {
-
-    };
+    let on_evict = |e: &Entry<V>| {};
     std::thread::spawn(move || loop {
         let is_closed = close.load(Ordering::Acquire);
         if is_closed {
-            println!("Closing");
             break;
         }
 
         if let Ok(entry) = set_buffer_handler.try_recv() {
-            println!("Received {:?}", entry);
             match entry.flag {
                 EntryFlag::New => {
                     let (victims, added) = cache.policy.add(entry.key, entry.cost);
@@ -338,7 +281,7 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
                 EntryFlag::Delete => {
                     cache.policy.remove(&entry.key);
                     if let Some((_, val)) = cache.store.remove(entry.key, entry.conflict) {
-                        // Log metrics
+                        //TODO: Log metrics
                     }
                 }
                 EntryFlag::Update => cache.policy.update(entry.key, entry.cost),
@@ -346,17 +289,14 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
         }
 
         if let Ok(tick) = ticker.try_recv() {
-            println!("tick {:?}", tick);
-            cache
-                .store
-                .cleanup(cache.policy.clone(), on_evict);
+            cache.store.cleanup(cache.policy.clone());
         }
     })
 }
 
 #[cfg(test)]
 mod test {
-    use crate::rcache::{Cache, Config, ConfigBuilder, Entry, ZeroCost};
+    use crate::rcache::{Cache, Config, Entry, ZeroCost};
     use std::default::default;
     use std::fmt::Debug;
     use std::sync::Arc;
@@ -366,29 +306,9 @@ mod test {
         std::thread::sleep(Duration::from_millis(millis))
     }
 
-    fn on_evict<V>(entry: &Entry<V>)
-    where
-        V: Clone + Debug,
-    {
-        println!("on_evict {:?}", entry)
-    }
-
-    fn on_reject<V>(entry: &Entry<V>)
-    where
-        V: Clone + Debug,
-    {
-        println!("on_reject {:?}", entry)
-    }
-
     #[test]
     fn basic() {
-        let cache = Cache::with_config(
-            ConfigBuilder::with_defaults()
-                .on_evict(on_evict)
-                .on_reject(on_reject)
-                .build(),
-            ZeroCost,
-        );
+        let cache = Cache::with_config(Config::default(), ZeroCost);
         cache.insert(3, 40).unwrap();
         wait(10);
         let cache = Cache::new();
@@ -398,6 +318,8 @@ mod test {
             .insert_with_ttl(b"bcd", 90, Duration::from_secs(2))
             .unwrap();
         wait(10);
-        wait(5000)
+        println!("{:?}", cache.get(b"bcd"));
+        wait(5000);
+        println!("{:?}", cache.get(b"bcd"));
     }
 }

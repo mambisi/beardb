@@ -57,7 +57,7 @@ where
         self.shards[(entry.key % NUM_SHARDS) as usize].update(entry)
     }
 
-    fn cleanup(&self, policy: Arc<dyn Policy>, on_evict: fn(&Entry<V>)) {
+    fn cleanup(&self, policy: Arc<dyn Policy>) {
         let mut buckets = self.em.buckets.write();
         let now = SystemTime::now();
         let bucket_id = clean_bucket(now);
@@ -73,18 +73,10 @@ where
                 continue;
             }
 
-            let cost = policy.cost(&key);
+            let _ = policy.cost(&key);
             policy.remove(&key);
-            if let Some((_, value)) = self.remove(key, conflict) {
-                on_evict(&Entry {
-                    flag: EntryFlag::Delete,
-                    key,
-                    conflict,
-                    value,
-                    cost,
-                    exp: utc_zero(),
-                })
-            };
+            // TODO: send notification about eviction
+            let _ = self.remove(key, conflict);
         }
     }
 
@@ -137,7 +129,7 @@ where
         if now > entry.exp {
             return None;
         }
-        Some(entry.value.clone())
+        entry.value.clone()
     }
 
     fn expiration(&self, key: u64) -> SystemTime {
@@ -154,8 +146,9 @@ where
         if !is_time_zero(&entry.exp) {
             self.em.remove(key, entry.exp);
         }
-        let entry = data.remove(&key);
-        entry.map(|entry| (entry.conflict, entry.value.clone()))
+        let entry = data.remove(&key)?;
+        let value = entry.value?;
+        Some((entry.conflict, value))
     }
 
     fn update(&self, new_entry: Entry<V>) -> Option<V> {
@@ -167,7 +160,7 @@ where
         self.em
             .update(new_entry.key, new_entry.conflict, entry.exp, new_entry.exp);
         let entry = data.insert(new_entry.key, new_entry);
-        entry.map(|v| v.value)
+        entry.map(|v| v.value).flatten()
     }
 
     fn clear(&self, callback: ItemCallBackFn<V>) {

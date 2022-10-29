@@ -57,7 +57,7 @@ where
         self.shards[(entry.key % NUM_SHARDS) as usize].update(entry)
     }
 
-    fn cleanup(&self, policy: Arc<dyn Policy>, on_evict: ItemCallBackFn<V>) {
+    fn cleanup(&self, policy: Arc<dyn Policy>, on_evict: fn(&Entry<V>)) {
         let mut buckets = self.em.buckets.write();
         let now = SystemTime::now();
         let bucket_id = clean_bucket(now);
@@ -76,16 +76,14 @@ where
             let cost = policy.cost(&key);
             policy.remove(&key);
             if let Some((_, value)) = self.remove(key, conflict) {
-                if let Some(on_evict) = on_evict.as_ref() {
-                    on_evict(&Entry {
-                        flag: EntryFlag::Delete,
-                        key,
-                        conflict,
-                        value,
-                        cost,
-                        exp: utc_zero(),
-                    })
-                }
+                on_evict(&Entry {
+                    flag: EntryFlag::Delete,
+                    key,
+                    conflict,
+                    value,
+                    cost,
+                    exp: utc_zero(),
+                })
             };
         }
     }

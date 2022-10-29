@@ -1,6 +1,7 @@
 #![feature(slice_pattern)]
 #![feature(generic_associated_types)]
 #![feature(map_first_last)]
+#![feature(default_free_fn)]
 extern crate core;
 
 use crate::error::Error;

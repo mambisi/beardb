@@ -14,6 +14,6 @@ where
     fn expiration(&self, key: u64) -> SystemTime;
     fn remove(&self, key: u64, conflict: u64) -> Option<(u64, V)>;
     fn update(&self, entry: Entry<V>) -> Option<V>;
-    fn cleanup(&self, policy: Arc<dyn Policy>, on_evict: ItemCallBackFn<V>);
+    fn cleanup(&self, policy: Arc<dyn Policy>, on_evict:fn(&Entry<V>));
     fn clear(&self, callback: ItemCallBackFn<V>);
 }

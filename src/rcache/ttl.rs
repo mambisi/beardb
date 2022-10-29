@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 use std::rc::Rc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 // TODO: make it configurable.
-const BUCKET_DURATION_SECS: i64 = 5;
+pub(crate) const BUCKET_DURATION_SECS: i64 = 5;
 
 type Bucket = HashMap<u64, u64>;
 

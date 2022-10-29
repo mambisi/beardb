@@ -3,67 +3,60 @@ use std::hash::{Hash, Hasher};
 use xxhash_rust::xxh3::Xxh3;
 
 pub(crate) trait CacheKey {
-    fn key_to_hash(&self) -> (u64,u64);
+    fn key_to_hash(&self) -> (u64, u64);
 }
 
 impl CacheKey for i8 {
     #[inline]
-    fn key_to_hash(&self) -> (u64,u64) {
+    fn key_to_hash(&self) -> (u64, u64) {
         (*self as u64, 0)
     }
 }
 
 impl CacheKey for u8 {
     #[inline]
-    fn key_to_hash(&self) -> (u64,u64) {
+    fn key_to_hash(&self) -> (u64, u64) {
         (*self as u64, 0)
     }
 }
-
 
 impl CacheKey for i16 {
     #[inline]
-    fn key_to_hash(&self) -> (u64,u64) {
+    fn key_to_hash(&self) -> (u64, u64) {
         (*self as u64, 0)
     }
 }
-
 
 impl CacheKey for u16 {
     #[inline]
-    fn key_to_hash(&self) -> (u64,u64) {
+    fn key_to_hash(&self) -> (u64, u64) {
         (*self as u64, 0)
     }
 }
-
 
 impl CacheKey for i32 {
-    fn key_to_hash(&self) -> (u64,u64) {
+    fn key_to_hash(&self) -> (u64, u64) {
         (*self as u64, 0)
     }
 }
-
 
 impl CacheKey for u32 {
     #[inline]
-    fn key_to_hash(&self) -> (u64,u64) {
+    fn key_to_hash(&self) -> (u64, u64) {
         (*self as u64, 0)
     }
 }
-
-
 
 impl CacheKey for i64 {
     #[inline]
-    fn key_to_hash(&self) -> (u64,u64) {
+    fn key_to_hash(&self) -> (u64, u64) {
         (*self as u64, 0)
     }
 }
 
-
 impl CacheKey for u64 {
     #[inline]
-    fn key_to_hash(&self) -> (u64,u64) {
+    fn key_to_hash(&self) -> (u64, u64) {
         (*self as u64, 0)
     }
 }

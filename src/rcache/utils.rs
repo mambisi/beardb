@@ -1,10 +1,9 @@
-use chrono::{DateTime, Utc};
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-pub(crate) fn is_time_zero(t: &DateTime<Utc>) -> bool {
+pub(crate) fn is_time_zero(t: &SystemTime) -> bool {
     t.eq(&utc_zero())
 }
 
-pub(crate) fn utc_zero() -> DateTime<Utc> {
-    DateTime::from(UNIX_EPOCH)
+pub(crate) fn utc_zero() -> SystemTime {
+    SystemTime::UNIX_EPOCH
 }

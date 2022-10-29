@@ -1,8 +1,9 @@
+use crate::rcache::cache_key::CacheKey;
 use crate::rcache::policy::{DefaultPolicy, Policy};
 use crate::rcache::ring::RingBuffer;
 use crate::rcache::sharded_map::ShardedMap;
 use crate::rcache::store::Store;
-use chrono::{DateTime, Utc};
+use crate::Error;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -14,13 +15,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use xxhash_rust::const_xxh64::xxh64;
 use xxhash_rust::xxh3::Xxh3;
-use crate::Error;
-use crate::rcache::cache_key::CacheKey;
 
 mod bloom;
+mod cache_key;
 mod cm_sketch;
 mod policy;
 mod pool;
@@ -29,11 +29,9 @@ mod sharded_map;
 mod store;
 mod ttl;
 mod utils;
-mod cache_key;
 
 // TODO: make it configurable
 const SET_BUF_SIZE: usize = 32 * 1024;
-
 
 #[derive(Debug)]
 pub(crate) enum EntryFlag {
@@ -46,7 +44,7 @@ pub(crate) trait Cost<V>
 where
     V: Clone,
 {
-    fn cost(&self, entry: &mut Entry<V>);
+    fn cost(&self, v: &V) -> i64;
 }
 
 pub(crate) trait TwoHash64<K>
@@ -66,7 +64,7 @@ where
     conflict: u64,
     value: V,
     cost: i64,
-    exp: DateTime<Utc>,
+    exp: SystemTime,
 }
 type ItemCallBackFn<V> = Option<Arc<Box<dyn 'static + Send + Sync + ItemCallback<V>>>>;
 
@@ -94,8 +92,8 @@ impl<V> Cost<V> for ZeroCost
 where
     V: Clone,
 {
-    fn cost(&self, entry: &mut Entry<V>){
-        entry.cost = 0;
+    fn cost(&self, v: &V) -> i64 {
+        0
     }
 }
 
@@ -135,33 +133,32 @@ struct InnerCache<V: Clone> {
     config: Arc<Config<V>>,
 }
 
-struct Cache<K, V: Clone, C: Cost<V>> {
+struct Cache<K, V: Clone> {
     inner: Arc<InnerCache<V>>,
     set_buf: SyncSender<Entry<V>>,
     get_buf: Arc<RingBuffer>,
     closed: Arc<AtomicBool>,
     hasher: DefaultTwoHasher<K>,
-    op: JoinHandle<()>,
-    cost: C,
+    processor_thread: JoinHandle<()>,
+    cost: Arc<dyn Cost<V>>,
 }
 
-impl<K, V: Clone, C: Cost<V>> Drop for Cache<K,V,C> {
+impl<K, V: Clone> Drop for Cache<K, V> {
     fn drop(&mut self) {
-        self.closed.store(true, Ordering::Release)
+        self.closed.store(true, Ordering::Release);
     }
 }
 
-impl<K, V, C> Cache<K, V, C>
+impl<K, V> Cache<K, V>
 where
     K: CacheKey,
     V: Clone + Debug + Send + Sync + 'static,
-    C: Cost<V>,
 {
-    pub(crate) fn new(cost : C) -> Cache<K,V,C> {
-        Cache::<K,V,C>::with_config(Config::default(), cost)
+    pub(crate) fn new() -> Cache<K, V> {
+        Cache::<K, V>::with_config(Config::default(), ZeroCost)
     }
 
-    pub(crate) fn with_config(config: Config<V>, cost: C) -> Self {
+    pub(crate) fn with_config(config: Config<V>, cost: impl Cost<V> + Sized + 'static) -> Self {
         let closed = Arc::new(AtomicBool::new(false));
         let config = Arc::new(config);
         let store = Arc::new(ShardedMap::new());
@@ -187,25 +184,27 @@ where
             get_buf: get_buffer,
             closed,
             hasher: DefaultTwoHasher(PhantomData::default()),
-            op,
-            cost,
+            processor_thread: op,
+            cost: Arc::new(cost),
         }
     }
 
-    pub(crate) fn insert(&self, key : K, value : V) -> crate::Result<()> {
-        let (key,conflict) = key.key_to_hash();
+    pub(crate) fn insert(&self, key: K, value: V, ttl: Duration) -> crate::Result<()> {
+        let (key, conflict) = key.key_to_hash();
+        let cost = self.cost.cost(&value);
+        let mut exp = SystemTime::now();
+        exp.add(ttl);
         let mut entry = Entry {
             flag: EntryFlag::New,
             key,
             conflict,
             value,
-            cost: 0,
-            exp: Default::default()
+            cost,
+            exp,
         };
-        self.cost.cost(&mut entry);
-        self.set_buf.send(entry).map_err(|e|{
-            Error::AnyError(Box::new(e))
-        })
+        self.set_buf
+            .send(entry)
+            .map_err(|e| Error::AnyError(Box::new(e)))
     }
 }
 
@@ -222,13 +221,26 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
         }
 
         if let Ok(entry) = set_buffer_handler.try_recv() {
-            println!("Recived {:?}", entry);
+            println!("Received {:?}", entry);
             match entry.flag {
                 EntryFlag::New => {
                     let (victims, added) = cache.policy.add(entry.key, entry.cost);
+                    if added {
+                        cache.store.set(entry)
+                    }
+                    if let Some(victims) = victims {
+                        for victim in victims {
+                            cache.store.remove(victim.key, 0);
+                        }
+                    }
                 }
-                EntryFlag::Delete => {}
-                EntryFlag::Update => {}
+                EntryFlag::Delete => {
+                    cache.policy.remove(&entry.key);
+                    if let Some((_, val)) = cache.store.remove(entry.key, entry.conflict) {
+                        // Log metrics
+                    }
+                }
+                EntryFlag::Update => cache.policy.update(entry.key, entry.cost),
             }
         }
     })
@@ -236,8 +248,8 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
 
 #[cfg(test)]
 mod test {
-    use std::time::Duration;
     use crate::rcache::{Cache, ZeroCost};
+    use std::time::Duration;
 
     fn wait() {
         std::thread::sleep(Duration::from_millis(10))
@@ -245,11 +257,11 @@ mod test {
 
     #[test]
     fn basic() {
-        let cache = Cache::new(ZeroCost);
-        cache.insert(3,40).unwrap();
+        let cache = Cache::new();
+        cache.insert(3, 40, Duration::from_secs(0)).unwrap();
         wait();
-        let cache = Cache::new(ZeroCost);
-        cache.insert(b"aba",40).unwrap();
+        let cache = Cache::new();
+        cache.insert(b"aba", 40, Duration::from_secs(0)).unwrap();
         wait();
     }
 }

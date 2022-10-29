@@ -4,7 +4,6 @@ use crate::rcache::ttl::{clean_bucket, ExpirationMap};
 use crate::rcache::utils::{is_time_zero, utc_zero};
 use crate::rcache::{Cost, Entry, EntryFlag, ItemCallBackFn};
 use arrayvec::ArrayVec;
-use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -26,9 +25,9 @@ where
 {
     pub(crate) fn new() -> Self {
         let em = Arc::new(ExpirationMap::new());
-        let mut shards: ArrayVec<LockedMap<V>, { NUM_SHARDS as usize }> = ArrayVec::new();
-        for shard in shards.iter_mut() {
-            shard.em = em.clone();
+        let mut shards: ArrayVec<LockedMap<V>, { NUM_SHARDS as usize }> = ArrayVec::new_const();
+        for _ in 0..NUM_SHARDS {
+            shards.push(LockedMap::new(em.clone()))
         }
         Self { shards, em }
     }
@@ -46,7 +45,7 @@ where
         self.shards[(entry.key % NUM_SHARDS) as usize].set(entry)
     }
 
-    fn expiration(&self, key: u64) -> DateTime<Utc> {
+    fn expiration(&self, key: u64) -> SystemTime {
         self.shards[(key % NUM_SHARDS) as usize].expiration(key)
     }
 
@@ -60,8 +59,8 @@ where
 
     fn cleanup(&self, policy: Arc<dyn Policy>, on_evict: ItemCallBackFn<V>) {
         let mut buckets = self.em.buckets.write();
-        let now = Utc::now();
-        let bucket_id = clean_bucket(Utc::now());
+        let now = SystemTime::now();
+        let bucket_id = clean_bucket(now);
         let bucket = match buckets.remove(&bucket_id) {
             None => {
                 return;
@@ -136,14 +135,14 @@ where
             return None;
         }
 
-        let now = Utc::now();
+        let now = SystemTime::now();
         if now > entry.exp {
             return None;
         }
         Some(entry.value.clone())
     }
 
-    fn expiration(&self, key: u64) -> DateTime<Utc> {
+    fn expiration(&self, key: u64) -> SystemTime {
         let data = self.data.read();
         data.get(&key).map(|data| data.exp).unwrap_or_else(utc_zero)
     }

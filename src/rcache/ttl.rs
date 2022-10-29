@@ -2,23 +2,23 @@ use crate::rcache::policy::Policy;
 use crate::rcache::store::Store;
 use crate::rcache::utils::{is_time_zero, utc_zero};
 use crate::rcache::{Entry, EntryFlag, ItemCallBackFn};
-use chrono::{DateTime, Utc};
 use parking_lot::{RwLock, RwLockWriteGuard};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::rc::Rc;
-use std::time::{Instant, SystemTime};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 // TODO: make it configurable.
 const BUCKET_DURATION_SECS: i64 = 5;
 
 type Bucket = HashMap<u64, u64>;
 
-pub(crate) fn storage_bucket(t: DateTime<Utc>) -> i64 {
-    (t.timestamp() / BUCKET_DURATION_SECS) + 1
+pub(crate) fn storage_bucket(t: SystemTime) -> i64 {
+    let timestamp = t.duration_since(UNIX_EPOCH).unwrap();
+    (timestamp.as_secs() as i64 / BUCKET_DURATION_SECS) + 1
 }
 
-pub(crate) fn clean_bucket(t: DateTime<Utc>) -> i64 {
+pub(crate) fn clean_bucket(t: SystemTime) -> i64 {
     storage_bucket(t) - 1
 }
 
@@ -36,7 +36,7 @@ impl<V> ExpirationMap<V> {
         }
     }
 
-    pub(crate) fn add(&self, key: u64, conflict: u64, exp: DateTime<Utc>) {
+    pub(crate) fn add(&self, key: u64, conflict: u64, exp: SystemTime) {
         if is_time_zero(&exp) {
             return;
         }
@@ -49,7 +49,7 @@ impl<V> ExpirationMap<V> {
         buckets: &mut RwLockWriteGuard<HashMap<i64, Bucket>>,
         key: u64,
         conflict: u64,
-        exp: DateTime<Utc>,
+        exp: SystemTime,
     ) {
         buckets
             .entry(storage_bucket(exp))
@@ -67,26 +67,20 @@ impl<V> ExpirationMap<V> {
         &self,
         buckets: &mut RwLockWriteGuard<HashMap<i64, Bucket>>,
         key: u64,
-        exp: DateTime<Utc>,
+        exp: SystemTime,
     ) {
         buckets.entry(storage_bucket(exp)).and_modify(|bucket| {
             bucket.remove(&key);
         });
     }
 
-    pub(crate) fn update(
-        &self,
-        key: u64,
-        conflict: u64,
-        old_exp: DateTime<Utc>,
-        new_exp: DateTime<Utc>,
-    ) {
+    pub(crate) fn update(&self, key: u64, conflict: u64, old_exp: SystemTime, new_exp: SystemTime) {
         let mut buckets = self.buckets.write();
         self.remove_(&mut buckets, key, old_exp);
         self.add_(&mut buckets, key, conflict, new_exp);
     }
 
-    pub(crate) fn remove(&self, key: u64, exp: DateTime<Utc>) {
+    pub(crate) fn remove(&self, key: u64, exp: SystemTime) {
         let mut buckets = self.buckets.write();
         self.remove_(&mut buckets, key, exp);
     }

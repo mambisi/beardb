@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, SyncSender};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 const LFU_SAMPLE: usize = 5;

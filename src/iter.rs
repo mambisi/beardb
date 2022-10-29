@@ -1,5 +1,3 @@
-use crate::Result;
-
 pub trait Iter {
     type Item;
     fn valid(&self) -> bool;

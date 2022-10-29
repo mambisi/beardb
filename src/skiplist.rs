@@ -418,7 +418,7 @@ mod tests {
 
     pub fn make_skipmap() -> InnerSkipList {
         let arena = Bump::new();
-        let mut skm = InnerSkipList::new(arena, Arc::new(Box::new(DefaultComparator)));
+        let skm = InnerSkipList::new(arena, Arc::new(Box::new(DefaultComparator)));
         let keys = vec![
             "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
             "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",
@@ -432,7 +432,7 @@ mod tests {
     }
 
     pub fn make_skipmap_t() -> SkipList {
-        let mut skm = SkipList::default();
+        let skm = SkipList::default();
         let keys = vec![
             "aba", "abb", "abc", "abd", "abe", "abf", "abg", "abh", "abi", "abj", "abk", "abl",
             "abm", "abn", "abo", "abp", "abq", "abr", "abs", "abt", "abu", "abv", "abw", "abx",
@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn test_no_dupes() {
-        let mut skm = make_skipmap();
+        let skm = make_skipmap();
         assert!(skm.insert("abc".as_bytes()).is_err());
         assert!(skm.insert("abf".as_bytes()).is_err());
     }

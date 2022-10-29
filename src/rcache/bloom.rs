@@ -3,7 +3,6 @@
 
 use bit_vec::BitVec;
 use std::cmp;
-use std::marker::PhantomData;
 
 /// Bloom filter structure
 #[derive(Clone, Debug)]
@@ -163,13 +162,13 @@ mod test {
 
     #[test]
     fn empty_filter() {
-        let mut t = BloomTestImpl::default();
+        let t = BloomTestImpl::default();
         test_utils::empty_filter(t)
     }
 
     #[test]
     fn small() {
-        let mut t = BloomTestImpl::default();
+        let t = BloomTestImpl::default();
         test_utils::small(t)
     }
 }

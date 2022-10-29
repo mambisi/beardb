@@ -1,10 +1,8 @@
+use std::io::Write;
 use crate::codec::decode_fixed32;
 use crate::constant::{BLOCK_ENTRY_HEADER_SIZE, BLOCK_META_SIZE, CHECKSUM_SIZE};
-use crate::iter::Iter;
 use crate::table::{decode_key, decode_key_value, TableOptions};
 use crate::{ensure, Error};
-use std::io::Write;
-use std::sync::Arc;
 
 #[derive(Debug)]
 pub(crate) struct Block<'a> {
@@ -189,7 +187,7 @@ impl BlockBuilder {
             .extend_from_slice(&(offset_count as u32).to_le_bytes());
         let crc = crc32fast::hash(self.data.as_slice());
 
-        let mut written_bytes = dst.write(self.data.as_slice())? + dst.write(&crc.to_le_bytes())?;
+        let written_bytes = dst.write(self.data.as_slice())? + dst.write(&crc.to_le_bytes())?;
         self.data.clear();
         self.base_key.clear();
         self.entry_offsets.clear();

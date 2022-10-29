@@ -1,9 +1,8 @@
 use crate::block::BlockBuilder;
-use crate::bloom::BloomFilterPolicy;
 use crate::constant::{BLOCK_ENTRY_HEADER_SIZE, BLOCK_META_SIZE, CHECKSUM_SIZE};
 use crate::table::TableOptions;
 use crate::table_index::TableIndexBuilder;
-use crate::{bloom, table_index};
+use crate::{bloom};
 use core::slice::SlicePattern;
 use std::io::Write;
 use std::sync::Arc;

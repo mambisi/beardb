@@ -1,14 +1,9 @@
-use crate::bloom::BloomFilterPolicy;
-use crate::codec::Reader;
+
 use crate::constant::BLOCK_ENTRY_HEADER_SIZE;
 use crate::table::TableOptions;
 use crate::{codec, Error};
 use bytecheck::CheckBytes;
-use core::slice::SlicePattern;
-use rkyv::vec::ArchivedVec;
-use rkyv::{AlignedVec, Archive, Archived, Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::io::Write;
+use rkyv::{AlignedVec, Archive, Deserialize, Serialize};
 use std::slice::Iter as SliceIter;
 use std::sync::Arc;
 

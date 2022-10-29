@@ -1,13 +1,11 @@
 use crate::rcache::policy::Policy;
 use crate::rcache::store::Store;
-use crate::rcache::utils::{is_time_zero, utc_zero};
-use crate::rcache::{Entry, EntryFlag, ItemCallBackFn};
+use crate::rcache::utils::{is_time_zero};
 use parking_lot::{RwLock, RwLockWriteGuard};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::rc::Rc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 // TODO: make it configurable.
 pub(crate) const BUCKET_DURATION_SECS: i64 = 5;
 

@@ -1,6 +1,5 @@
 use crate::codec::Codec;
 use crate::{ensure, Error};
-use std::cmp::Ordering;
 use std::io::Read;
 use std::mem::size_of;
 
@@ -68,7 +67,7 @@ impl<'a> Codec<'a> for MemEntry<'a> {
 
     fn decode_from_slice(buf: &'a [u8]) -> crate::Result<Self> {
         let mut cursor = 0_usize;
-        let mut buffer_len = buf.len();
+        let buffer_len = buf.len();
         let key_offset = size_of::<u32>();
         cursor += key_offset;
         ensure!(cursor <= buffer_len, Error::CodecError);

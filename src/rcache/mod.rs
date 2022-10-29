@@ -7,18 +7,15 @@ use crate::rcache::ttl::BUCKET_DURATION_SECS;
 use crate::Error;
 use crossbeam::channel::tick;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::ops::{Add, Div};
-use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime};
-use xxhash_rust::const_xxh64::xxh64;
+use std::time::{Duration, SystemTime};
 use xxhash_rust::xxh3::Xxh3;
 
 mod bloom;
@@ -94,7 +91,7 @@ impl<V> Cost<V> for ZeroCost
 where
     V: Clone,
 {
-    fn cost(&self, v: &V) -> i64 {
+    fn cost(&self, _v: &V) -> i64 {
         0
     }
 }
@@ -232,13 +229,13 @@ where
         if !self.inner.config.ignore_internal_cost {
             cost += std::mem::size_of::<Entry<V>>() as i64;
         }
-        let mut exp = if ttl.as_secs() > 0 {
+        let exp = if ttl.as_secs() > 0 {
             SystemTime::now().add(ttl)
         } else {
             SystemTime::UNIX_EPOCH
         };
 
-        let mut entry = Entry {
+        let entry = Entry {
             flag: EntryFlag::New,
             key,
             conflict,
@@ -258,7 +255,7 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
     cache: Arc<InnerCache<V>>,
 ) -> JoinHandle<()> {
     let ticker = tick(Duration::from_secs(BUCKET_DURATION_SECS as u64).div(2));
-    let on_evict = |e: &Entry<V>| {};
+    let _on_evict = |_e: &Entry<V>| {};
     std::thread::spawn(move || loop {
         let is_closed = close.load(Ordering::Acquire);
         if is_closed {
@@ -280,7 +277,7 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
                 }
                 EntryFlag::Delete => {
                     cache.policy.remove(&entry.key);
-                    if let Some((_, val)) = cache.store.remove(entry.key, entry.conflict) {
+                    if let Some((_, _val)) = cache.store.remove(entry.key, entry.conflict) {
                         //TODO: Log metrics
                     }
                 }
@@ -288,7 +285,7 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
             }
         }
 
-        if let Ok(tick) = ticker.try_recv() {
+        if let Ok(_tick) = ticker.try_recv() {
             cache.store.cleanup(cache.policy.clone());
         }
     })
@@ -296,10 +293,7 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
 
 #[cfg(test)]
 mod test {
-    use crate::rcache::{Cache, Config, Entry, ZeroCost};
-    use std::default::default;
-    use std::fmt::Debug;
-    use std::sync::Arc;
+    use crate::rcache::{Cache, Config, ZeroCost};
     use std::time::Duration;
 
     fn wait(millis: u64) {

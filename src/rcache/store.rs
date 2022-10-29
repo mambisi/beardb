@@ -1,7 +1,5 @@
 use crate::rcache::policy::Policy;
 use crate::rcache::{Entry, ItemCallBackFn};
-use std::fmt::Debug;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::SystemTime;
 

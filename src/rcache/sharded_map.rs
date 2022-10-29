@@ -2,15 +2,13 @@ use crate::rcache::policy::Policy;
 use crate::rcache::store::Store;
 use crate::rcache::ttl::{clean_bucket, ExpirationMap};
 use crate::rcache::utils::{is_time_zero, utc_zero};
-use crate::rcache::{Cost, Entry, EntryFlag, ItemCallBackFn};
+use crate::rcache::{,Entry, ItemCallBackFn};
 use arrayvec::ArrayVec;
 use parking_lot::RwLock;
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime};
 
 const NUM_SHARDS: u64 = 256;
 

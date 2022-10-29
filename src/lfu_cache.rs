@@ -1,9 +1,7 @@
 use indexmap::IndexSet;
-use std::borrow::{Borrow, BorrowMut};
-use std::cell::{Cell, RefCell};
-use std::collections::hash_map::Iter as HashMapIter;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::fmt::{Debug, Display, Formatter};
+use std::cell::{RefCell};
+use std::collections::{BTreeMap, HashMap};
+use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::num::NonZeroUsize;
 use std::rc::Rc;
@@ -190,7 +188,7 @@ where
             return None;
         };
 
-        let mut freq = tmp.parent.clone();
+        let freq = tmp.parent.clone();
         freq.as_ref().borrow_mut().items.remove(key);
         if freq.as_ref().borrow().items.is_empty() {
             Self::delete_node(freq);
@@ -205,7 +203,7 @@ where
         }
 
         let next_freg = self.head.as_ref().borrow_mut().next.clone();
-        let mut freq = match next_freg {
+        let freq = match next_freg {
             None => Node::new(0, &mut self.head, None),
             Some(freq) => {
                 if freq.as_ref().borrow().freq_count != 0 {
@@ -297,7 +295,6 @@ mod test {
     #[cfg(test)]
     mod get {
         use crate::lfu_cache::LFUCache;
-        use std::borrow::Borrow;
 
         #[test]
         fn empty() {
@@ -540,7 +537,6 @@ mod test {
     #[cfg(test)]
     mod bookkeeping {
         use crate::lfu_cache::LFUCache;
-        use std::num::NonZeroUsize;
 
         #[test]
         fn getting_one_element_has_constant_freq_list_size() {

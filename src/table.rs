@@ -3,13 +3,12 @@ use crate::bloom::BloomFilterPolicy;
 use crate::codec::decode_fixed32;
 use crate::constant::BLOCK_ENTRY_HEADER_SIZE;
 use crate::iter::Iter;
-use crate::table_index::{BlockIndex, TableIndexReader};
+use crate::table_index::{TableIndexReader};
 use crate::{codec, Error};
 use core::slice::SlicePattern;
 use memmap2::Mmap;
-use std::marker::PhantomData;
 use std::sync::Arc;
-use std::thread::current;
+
 
 pub(crate) fn decode_key(data: &[u8]) -> &[u8] {
     //TODO: Handle index errors
@@ -241,9 +240,7 @@ mod test {
     use crate::iter::Iter;
     use crate::table::{InnerTable, Table, TableOptions};
     use crate::table_builder::TableBuilder;
-    use core::slice::SlicePattern;
-    use memmap2::{Mmap, MmapMut};
-    use std::fs::OpenOptions;
+    use memmap2::{Mmap};
     use std::sync::Arc;
     use tempfile::tempfile;
 

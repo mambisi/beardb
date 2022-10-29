@@ -1,13 +1,10 @@
 use crate::rcache::bloom::Bloom;
 use crate::rcache::cm_sketch::CMSketch;
 use crate::rcache::ring;
-use crate::Error;
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::mpsc::{Receiver, Sender, SyncSender};
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -190,7 +187,7 @@ impl Policy for DefaultPolicy {
     }
 
     fn has(&self, key: &u64) -> bool {
-        let mut p = self.inner.lock();
+        let p = self.inner.lock();
 
         p.evict.key_costs.contains_key(key)
     }
@@ -202,7 +199,7 @@ impl Policy for DefaultPolicy {
     }
 
     fn cap(&self) -> usize {
-        let mut p = self.inner.lock();
+        let p = self.inner.lock();
 
         (p.evict.max_cost() - p.evict.used) as usize
     }
@@ -217,7 +214,7 @@ impl Policy for DefaultPolicy {
     }
 
     fn cost(&self, key: &u64) -> i64 {
-        let mut p = self.inner.lock();
+        let p = self.inner.lock();
         if let Some(cost) = p.evict.key_costs.get(key) {
             return *cost;
         }
@@ -390,7 +387,7 @@ mod test {
         let policy = DefaultPolicy::new(100, 10);
         assert!(policy.push(vec![]));
         let mut keep_count = 0;
-        for i in 0..10 {
+        for _i in 0..10 {
             if policy.push(vec![1, 2, 3, 4, 5]) {
                 keep_count += 1;
             }

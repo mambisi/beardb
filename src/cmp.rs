@@ -7,7 +7,7 @@ pub trait Comparator {
 pub struct MemTableComparator;
 
 impl Comparator for MemTableComparator {
-    fn cmp(&self, a: &[u8], b: &[u8]) -> crate::Result<Ordering> {
+    fn cmp(&self, _a: &[u8], _b: &[u8]) -> crate::Result<Ordering> {
         // let a = MemEntry::decode(a)?;
         // let b = MemEntry::decode(b)?;
         //

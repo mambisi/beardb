@@ -1,5 +1,4 @@
 use crate::codec::decode_fixed32;
-use std::io::Write;
 
 fn hash(data: &[u8], seed: u32) -> u32 {
     let m: u32 = 0xc6a4a793;
@@ -179,19 +178,19 @@ mod test {
 
     #[test]
     fn empty_filter() {
-        let mut t = BloomTestImpl::default();
+        let t = BloomTestImpl::default();
         test_utils::empty_filter(t)
     }
 
     #[test]
     fn small() {
-        let mut t = BloomTestImpl::default();
+        let t = BloomTestImpl::default();
         test_utils::small(t)
     }
 
     #[test]
     fn varying_lengths() {
-        let mut t = BloomTestImpl::default();
+        let t = BloomTestImpl::default();
         test_utils::varying_lengths(t)
     }
 }

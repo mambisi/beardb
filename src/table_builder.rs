@@ -1,11 +1,11 @@
+use std::io::Write;
+use std::sync::Arc;
+
+use crate::bloom;
 use crate::block::BlockBuilder;
 use crate::constant::{BLOCK_ENTRY_HEADER_SIZE, BLOCK_META_SIZE, CHECKSUM_SIZE};
 use crate::table::TableOptions;
 use crate::table_index::TableIndexBuilder;
-use crate::{bloom};
-use core::slice::SlicePattern;
-use std::io::Write;
-use std::sync::Arc;
 
 pub(crate) struct TableBuilder<W> {
     dst: W,
@@ -115,10 +115,11 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
     use crate::bloom::BloomFilterPolicy;
     use crate::table::TableOptions;
     use crate::table_builder::TableBuilder;
-    use std::sync::Arc;
 
     fn table_opts() -> Arc<TableOptions> {
         Arc::new(TableOptions {

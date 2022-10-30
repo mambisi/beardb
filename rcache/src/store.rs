@@ -1,11 +1,12 @@
-use crate::rcache::policy::Policy;
-use crate::rcache::{Entry, ItemCallBackFn};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use crate::{Entry, ItemCallBackFn};
+use crate::policy::Policy;
+
 pub(crate) trait Store<V>
-where
-    V: Clone,
+    where
+        V: Clone,
 {
     fn get(&self, key: u64, conflict: u64) -> Option<V>;
     fn set(&self, entry: Entry<V>);

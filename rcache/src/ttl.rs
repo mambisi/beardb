@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::{RwLock, RwLockWriteGuard};
 
-use crate::rcache::utils::is_time_zero;
+use crate::utils::is_time_zero;
 
 // TODO: make it configurable.
 pub(crate) const BUCKET_DURATION_SECS: i64 = 5;

@@ -124,9 +124,9 @@ impl BloomFilterPolicy {
 
 #[cfg(test)]
 mod test {
+    use test_utils::bloom_test::BloomTest;
+
     use crate::bloom::BloomFilterPolicy;
-    use crate::test_utils;
-    use crate::test_utils::BloomTest;
 
     struct BloomTestImpl {
         policy: BloomFilterPolicy,
@@ -179,18 +179,18 @@ mod test {
     #[test]
     fn empty_filter() {
         let t = BloomTestImpl::default();
-        test_utils::empty_filter(t)
+        test_utils::bloom_test::empty_filter(t)
     }
 
     #[test]
     fn small() {
         let t = BloomTestImpl::default();
-        test_utils::small(t)
+        test_utils::bloom_test::small(t)
     }
 
     #[test]
     fn varying_lengths() {
         let t = BloomTestImpl::default();
-        test_utils::varying_lengths(t)
+        test_utils::bloom_test::varying_lengths(t)
     }
 }

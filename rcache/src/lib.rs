@@ -1,26 +1,29 @@
-use crate::rcache::cache_key::CacheKey;
-use crate::rcache::policy::{DefaultPolicy, Policy};
-use crate::rcache::ring::RingBuffer;
-use crate::rcache::sharded_map::ShardedMap;
-use crate::rcache::store::Store;
-use crate::rcache::ttl::BUCKET_DURATION_SECS;
-use crate::Error;
-use crossbeam::channel::tick;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::ops::{Add, Div};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
-use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
+
+use crossbeam::channel::tick;
 use xxhash_rust::xxh3::Xxh3;
+
+use crate::cache_key::CacheKey;
+use crate::error::Error;
+use crate::policy::{DefaultPolicy, Policy};
+use crate::ring::RingBuffer;
+use crate::sharded_map::ShardedMap;
+use crate::store::Store;
+use crate::ttl::BUCKET_DURATION_SECS;
 
 mod bloom;
 mod cache_key;
 mod cm_sketch;
+mod error;
 mod policy;
 mod pool;
 mod ring;
@@ -28,6 +31,9 @@ mod sharded_map;
 mod store;
 mod ttl;
 mod utils;
+
+pub type Result<T> = std::result::Result<T, Error>;
+
 
 // TODO: make it configurable
 const SET_BUF_SIZE: usize = 32 * 1024;
@@ -109,13 +115,13 @@ impl Default for Config {
     }
 }
 
-pub(crate) struct Config {
-    pub(crate) num_counters: u64,
-    pub(crate) max_cost: i64,
-    pub(crate) pool_capacity: usize,
-    pub(crate) get_buffer_size: usize,
-    pub(crate) set_buffer_size: usize,
-    pub(crate) ignore_internal_cost: bool,
+pub struct Config {
+    pub num_counters: u64,
+    pub max_cost: i64,
+    pub pool_capacity: usize,
+    pub get_buffer_size: usize,
+    pub set_buffer_size: usize,
+    pub ignore_internal_cost: bool,
 }
 
 struct InnerCache<V: Clone> {
@@ -145,11 +151,11 @@ where
     K: CacheKey,
     V: Clone + Debug + Send + Sync + Default + 'static,
 {
-    pub(crate) fn new() -> Cache<K, V> {
+    pub fn new() -> Cache<K, V> {
         Cache::<K, V>::with_config(Config::default(), ZeroCost)
     }
 
-    pub(crate) fn with_config(config: Config, cost: impl Cost<V> + Sized + 'static) -> Self {
+    pub fn with_config(config: Config, cost: impl Cost<V> + Sized + 'static) -> Self {
         let closed = Arc::new(AtomicBool::new(false));
         let config = Arc::new(config);
         let store = Arc::new(ShardedMap::new());
@@ -180,11 +186,11 @@ where
         }
     }
 
-    pub(crate) fn insert(&self, key: K, value: V) -> crate::Result<()> {
+    pub fn insert(&self, key: K, value: V) -> Result<()> {
         self.insert_with_ttl(key, value, Duration::from_secs(0))
     }
 
-    pub(crate) fn get(&self, key: K) -> Option<V> {
+    pub fn get(&self, key: K) -> Option<V> {
         if self.closed.load(Ordering::Acquire) {
             return None;
         }
@@ -199,7 +205,7 @@ where
         value
     }
 
-    pub(crate) fn remove(&self, key: K) -> crate::Result<()> {
+    pub fn remove(&self, key: K) -> Result<()> {
         if self.closed.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -220,10 +226,10 @@ where
                 cost: 0,
                 exp: SystemTime::UNIX_EPOCH,
             })
-            .map_err(|e| Error::AnyError(Box::new(e)))
+            .map_err(|e| Error::SendError(Box::new(e)))
     }
 
-    pub(crate) fn insert_with_ttl(&self, key: K, value: V, ttl: Duration) -> crate::Result<()> {
+    pub fn insert_with_ttl(&self, key: K, value: V, ttl: Duration) -> Result<()> {
         let (key, conflict) = key.key_to_hash();
         let mut cost = self.cost.cost(&value);
         if !self.inner.config.ignore_internal_cost {
@@ -245,7 +251,7 @@ where
         };
         self.set_buf
             .send(entry)
-            .map_err(|e| Error::AnyError(Box::new(e)))
+            .map_err(|e| Error::SendError(Box::new(e)))
     }
 }
 
@@ -289,31 +295,4 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
             cache.store.cleanup(cache.policy.clone());
         }
     })
-}
-
-#[cfg(test)]
-mod test {
-    use crate::rcache::{Cache, Config, ZeroCost};
-    use std::time::Duration;
-
-    fn wait(millis: u64) {
-        std::thread::sleep(Duration::from_millis(millis))
-    }
-
-    #[test]
-    fn basic() {
-        let cache = Cache::with_config(Config::default(), ZeroCost);
-        cache.insert(3, 40).unwrap();
-        wait(10);
-        let cache = Cache::new();
-        cache.insert(b"aba", 40).unwrap();
-        wait(10);
-        cache
-            .insert_with_ttl(b"bcd", 90, Duration::from_secs(2))
-            .unwrap();
-        wait(10);
-        println!("{:?}", cache.get(b"bcd"));
-        wait(5000);
-        println!("{:?}", cache.get(b"bcd"));
-    }
 }

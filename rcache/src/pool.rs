@@ -1,6 +1,7 @@
-use parking_lot::Mutex;
 use std::mem::{forget, ManuallyDrop};
 use std::ops::{Deref, DerefMut};
+
+use parking_lot::Mutex;
 
 pub type Stack<T> = Vec<T>;
 
@@ -106,8 +107,9 @@ impl<'a, T> Drop for Reusable<'a, T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::rcache::pool::{Pool, Reusable};
     use std::mem::drop;
+
+    use crate::pool::{Pool, Reusable};
 
     #[test]
     fn detach() {

@@ -1,4 +1,4 @@
-pub(crate) trait BloomTest {
+pub trait BloomTest {
     fn reset(&mut self);
 
     fn add(&mut self, key: &[u8]);
@@ -32,17 +32,17 @@ fn next_length(mut len: usize) -> usize {
     return len;
 }
 
-pub(crate) fn empty_filter<T>(mut t: T)
-where
-    T: BloomTest,
+pub fn empty_filter<T>(mut t: T)
+    where
+        T: BloomTest,
 {
     assert!(!t.matches(b"hello"));
     assert!(!t.matches(b"world"));
 }
 
-pub(crate) fn small<T>(mut t: T)
-where
-    T: BloomTest,
+pub fn small<T>(mut t: T)
+    where
+        T: BloomTest,
 {
     t.add(b"hello");
     t.add(b"world");
@@ -52,9 +52,9 @@ where
     assert!(!t.matches(b"foo"));
 }
 
-pub(crate) fn varying_lengths<T>(mut t: T)
-where
-    T: BloomTest,
+pub fn varying_lengths<T>(mut t: T)
+    where
+        T: BloomTest,
 {
     let mut mediocre_filters = 0;
     let mut good_filters = 0;

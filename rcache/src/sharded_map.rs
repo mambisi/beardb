@@ -6,11 +6,11 @@ use std::time::SystemTime;
 use arrayvec::ArrayVec;
 use parking_lot::RwLock;
 
-use crate::rcache::{Entry, ItemCallBackFn};
-use crate::rcache::policy::Policy;
-use crate::rcache::store::Store;
-use crate::rcache::ttl::{clean_bucket, ExpirationMap};
-use crate::rcache::utils::{is_time_zero, utc_zero};
+use crate::{Entry, ItemCallBackFn};
+use crate::policy::Policy;
+use crate::store::Store;
+use crate::ttl::{clean_bucket, ExpirationMap};
+use crate::utils::{is_time_zero, utc_zero};
 
 const NUM_SHARDS: u64 = 256;
 
@@ -20,7 +20,7 @@ pub(crate) struct ShardedMap<V: Clone> {
 }
 
 impl<V> ShardedMap<V>
-where
+    where
     V: Clone,
 {
     pub(crate) fn new() -> Self {

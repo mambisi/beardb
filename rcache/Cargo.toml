@@ -1,32 +1,19 @@
 [package]
-name = "beardb"
+name = "rcache"
 version = "0.1.0"
 edition = "2021"
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bumpalo = {version = "3.11.0", features = ["collections", "allocator_api", "boxed"]}
 rand = "0.8.5"
 thiserror = "1.0.37"
 rkyv = { version = "0.7", features = ["validation", "bytecheck"] }
-crc32fast = "1.3.2"
-bytecheck = "0.6.9"
-memmap2 = "0.5.7"
-indexmap = "1.9.1"
 bit-vec = "0.6.3"
 crossbeam = "0.8.2"
 parking_lot = "0.12.1"
 arrayvec = "0.7.2"
-[dev-dependencies]
-pretty_assertions = "1.3.0"
-tempfile = "3.3.0"
 xxhash-rust = { version = "0.8.6", features = ["xxh3", "const_xxh64"] }
-test_utils = { path = "test_utils" }
-
-[workspace]
-members = [
-    ".",
-    "rcache",
-    "test_utils"
-]
+[dev-dependencies]
+test_utils = { path = "../test_utils" }

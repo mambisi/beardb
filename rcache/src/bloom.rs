@@ -1,8 +1,9 @@
 #![warn(non_camel_case_types, non_upper_case_globals, unused_qualifications)]
 #![allow(clippy::unreadable_literal, clippy::bool_comparison)]
 
-use bit_vec::BitVec;
 use std::cmp;
+
+use bit_vec::BitVec;
 
 /// Bloom filter structure
 #[derive(Clone, Debug)]
@@ -110,10 +111,11 @@ impl Bloom {
 
 #[cfg(test)]
 mod test {
-    use crate::rcache::bloom::Bloom;
-    use crate::test_utils;
-    use crate::test_utils::BloomTest;
     use xxhash_rust::xxh3::xxh3_64;
+
+    use test_utils::bloom_test::BloomTest;
+
+    use crate::bloom::Bloom;
 
     const N: usize = 1 << 16;
 
@@ -163,12 +165,12 @@ mod test {
     #[test]
     fn empty_filter() {
         let t = BloomTestImpl::default();
-        test_utils::empty_filter(t)
+        test_utils::bloom_test::empty_filter(t)
     }
 
     #[test]
     fn small() {
         let t = BloomTestImpl::default();
-        test_utils::small(t)
+        test_utils::bloom_test::small(t)
     }
 }

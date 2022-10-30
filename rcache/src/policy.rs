@@ -1,12 +1,14 @@
-use crate::rcache::bloom::Bloom;
-use crate::rcache::cm_sketch::CMSketch;
-use crate::rcache::ring;
-use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
-use std::sync::Arc;
 use std::thread::JoinHandle;
+
+use parking_lot::Mutex;
+
+use crate::bloom::Bloom;
+use crate::cm_sketch::CMSketch;
+use crate::ring;
 
 const LFU_SAMPLE: usize = 5;
 
@@ -358,10 +360,12 @@ impl TinyLFU {
 
 #[cfg(test)]
 mod test {
-    use crate::rcache::policy::{DefaultPolicy, Policy};
-    use crate::rcache::ring::Consumer;
     use std::ops::Not;
     use std::time::Duration;
+
+    use crate::DefaultPolicy;
+    use crate::policy::Policy;
+    use crate::ring::Consumer;
 
     #[test]
     fn process_items() {

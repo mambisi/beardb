@@ -13,6 +13,6 @@ pub(crate) trait Store<V>
     fn expiration(&self, key: u64) -> SystemTime;
     fn remove(&self, key: u64, conflict: u64) -> Option<(u64, V)>;
     fn update(&self, entry: &Entry<V>) -> Option<V>;
-    fn cleanup(&self, policy: Arc<dyn Policy>, broadcast: &Broadcast<V>);
+    fn cleanup(&self, policy: &dyn Policy);
     fn clear(&self, callback: ItemCallBackFn<V>);
 }

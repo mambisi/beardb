@@ -57,7 +57,7 @@ where
         self.shards[(entry.key % NUM_SHARDS) as usize].update(&entry)
     }
 
-    fn cleanup(&self, policy: Arc<dyn Policy>, broadcast: &Broadcast<V>) {
+    fn cleanup(&self, policy: &dyn Policy) {
         let mut buckets = self.em.buckets.write();
         let now = SystemTime::now();
         let bucket_id = clean_bucket(now);
@@ -73,16 +73,9 @@ where
                 continue;
             }
 
-            let cost = policy.cost(&key);
+            let _ = policy.cost(&key);
             policy.remove(&key);
-            if let Some((conflict, value)) = self.remove(key, conflict) {
-                broadcast.send(Event::Evict, PartialEntry {
-                    key,
-                    conflict,
-                    value: Some(value),
-                    cost,
-                })
-            }
+            let _ = self.remove(key, conflict);
         }
     }
 

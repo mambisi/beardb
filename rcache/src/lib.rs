@@ -25,7 +25,6 @@ use crate::store::Store;
 use crate::ttl::BUCKET_DURATION_SECS;
 
 mod bloom;
-mod broadcast;
 mod cache_key;
 mod cm_sketch;
 mod error;
@@ -149,7 +148,6 @@ struct InnerCache<V: Clone> {
     policy: Arc<DefaultPolicy>,
     config: Arc<Config>,
     metrics: Option<Metrics>,
-    broadcast: Broadcast<V>,
 }
 
 struct Cache<K, V: Clone> {
@@ -203,7 +201,6 @@ impl<K, V> Cache<K, V>
             config.pool_capacity,
             config.get_buffer_size,
         ));
-        let broadcast = Broadcast::new(10);
         let (set_buffer, set_buffer_handler) = crossbeam::channel::bounded(config.set_buffer_size);
 
         let inner = InnerCache {
@@ -211,7 +208,6 @@ impl<K, V> Cache<K, V>
             policy,
             config,
             metrics,
-            broadcast,
         };
 
         process_items(closed.clone(), set_buffer_handler, inner.clone());
@@ -253,12 +249,7 @@ impl<K, V> Cache<K, V>
         }
         let (key, conflict) = key.key_to_hash();
         self.get_buf.push(key);
-        let value = self.inner.store.remove(key, conflict);
-        if value.is_some() {
-            // TODO: add Metrics
-        } else {
-            // TODO: add Metrics
-        }
+        let _ = self.inner.store.remove(key, conflict);
         self.set_buf
             .send(Entry {
                 flag: EntryFlag::Delete,
@@ -293,15 +284,6 @@ impl<K, V> Cache<K, V>
         };
 
         if let Some(prev) = self.inner.store.update(&entry) {
-            self.inner.broadcast.send(
-                Event::Exit,
-                PartialEntry {
-                    key,
-                    conflict,
-                    value: Some(prev),
-                    cost,
-                },
-            );
             entry.flag = EntryFlag::Update;
         }
         let flag = entry.flag;
@@ -316,10 +298,6 @@ impl<K, V> Cache<K, V>
         }
         return true;
     }
-
-    pub fn subscribe(&self, event: Event) -> Subscription<V> {
-        self.inner.broadcast.subscribe(event)
-    }
 }
 
 fn process_items<V: Clone + Debug + Send + Sync + 'static>(
@@ -328,28 +306,6 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
     cache: InnerCache<V>,
 ) {
     let ticker = tick(Duration::from_secs(BUCKET_DURATION_SECS as u64).div(2));
-    let _on_evict = |_e: &Entry<V>| {};
-
-    let start_ts: Arc<RwLock<HashMap<u64, Instant>>> = Arc::new(RwLock::new(HashMap::new()));
-    let start_ts_max = 100000_usize; // TODO: Make this configurable via options.
-    let broadcast = Broadcast::new(1);
-    let mut on_evict = broadcast.subscribe(Event::Evict);
-    {
-        let cache = cache.clone();
-        let start_ts = start_ts.clone();
-        std::thread::spawn(move || loop {
-            if let Ok(e) = on_evict.as_ref().try_recv() {
-                if let Some(ts) = start_ts.read().get(&e.key) {
-                    if let Some(metrics) = cache.metrics.as_ref() {
-                        metrics.track_eviction(ts.elapsed().as_secs());
-                    }
-                }
-                println!("On Evict {:?}", e);
-                cache.broadcast.send(Event::Evict, e);
-            }
-        });
-    }
-
     std::thread::spawn(move || loop {
         let is_closed = close.load(Ordering::Acquire);
         if is_closed {
@@ -365,12 +321,6 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
                         cache.store.set(entry);
                         if let Some(metrics) = &cache.metrics {
                             metrics.add(MetricType::KeyAdd, key, 1);
-                            track_admission(
-                                &cache,
-                                start_ts.write().borrow_mut(),
-                                start_ts_max,
-                                key,
-                            )
                         }
                     }
                     if let Some(victims) = victims {
@@ -385,49 +335,22 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
                                 entry.conflict = conflict;
                                 entry.value = Some(value)
                             };
-                            cache.broadcast.send(Event::Evict, entry)
                         }
                     }
                 }
                 EntryFlag::Delete => {
                     cache.policy.remove(&entry.key);
-                    if let Some((_, value)) = cache.store.remove(entry.key, entry.conflict) {
-                        cache.broadcast.send(
-                            Event::Exit,
-                            PartialEntry {
-                                key: entry.key,
-                                conflict: entry.conflict,
-                                value: Some(value),
-                                cost: entry.cost,
-                            },
-                        )
-                    }
+                    let _ = cache.store.remove(entry.key, entry.conflict);
                 }
                 EntryFlag::Update => cache.policy.update(entry.key, entry.cost),
             }
         }
 
         if let Ok(_tick) = ticker.try_recv() {
-            cache.store.cleanup(cache.policy.clone(), &broadcast);
+            cache.store.cleanup(cache.policy.as_ref());
         }
     });
 }
-
-fn track_admission<V: Clone + Debug + Send + Sync + 'static>(
-    cache: &InnerCache<V>,
-    start_ts: &mut HashMap<u64, Instant>,
-    start_ts_max: usize,
-    key: u64,
-) {
-    if cache.metrics.is_none() {
-        return;
-    }
-    start_ts.insert(key, Instant::now());
-    if start_ts.len() > start_ts_max {
-        for _ in start_ts.drain().take(start_ts_max) {}
-    }
-}
-
 #[cfg(test)]
 mod test {
     use std::time::Duration;
@@ -441,18 +364,6 @@ mod test {
     #[test]
     fn basic() {
         let cache = Cache::with_config(Config::default(), ZeroCost);
-        let mut on_evict = cache.subscribe(Event::Evict);
-        std::thread::spawn(move || loop {
-            if let Ok(e) = on_evict.as_ref().try_recv() {
-                println!("test::basic On Evict {:?}", e);
-            }
-        });
-        let mut on_exit = cache.subscribe(Event::Exit);
-        std::thread::spawn(move || loop {
-            if let Ok(e) = on_exit.as_ref().try_recv() {
-                println!("test::basic On Exit {:?}", e);
-            }
-        });
         assert!(cache.insert(3, 40));
         wait(10);
         let cache = Cache::new();
@@ -463,7 +374,5 @@ mod test {
         println!("{:?}", cache.get(b"bcd"));
         wait(5000);
         println!("{:?}", cache.get(b"bcd"));
-        wait(10000);
-        wait(5000);
     }
 }

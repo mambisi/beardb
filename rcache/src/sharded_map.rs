@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use arrayvec::ArrayVec;
 use parking_lot::RwLock;
 
-use crate::{Entry, ItemCallBackFn};
+use crate::{Broadcast, Entry, Event, ItemCallBackFn, PartialEntry};
 use crate::policy::Policy;
 use crate::store::Store;
 use crate::ttl::{clean_bucket, ExpirationMap};
@@ -53,11 +53,11 @@ where
         self.shards[(key % NUM_SHARDS) as usize].remove(key, conflict)
     }
 
-    fn update(&self, entry: Entry<V>) -> Option<V> {
-        self.shards[(entry.key % NUM_SHARDS) as usize].update(entry)
+    fn update(&self, entry: &Entry<V>) -> Option<V> {
+        self.shards[(entry.key % NUM_SHARDS) as usize].update(&entry)
     }
 
-    fn cleanup(&self, policy: Arc<dyn Policy>) {
+    fn cleanup(&self, policy: Arc<dyn Policy>, broadcast: &Broadcast<V>) {
         let mut buckets = self.em.buckets.write();
         let now = SystemTime::now();
         let bucket_id = clean_bucket(now);
@@ -73,10 +73,16 @@ where
                 continue;
             }
 
-            let _ = policy.cost(&key);
+            let cost = policy.cost(&key);
             policy.remove(&key);
-            // TODO: send notification about eviction
-            let _ = self.remove(key, conflict);
+            if let Some((conflict, value)) = self.remove(key, conflict) {
+                broadcast.send(Event::Evict, PartialEntry {
+                    key,
+                    conflict,
+                    value: Some(value),
+                    cost,
+                })
+            }
         }
     }
 
@@ -151,7 +157,7 @@ where
         Some((entry.conflict, value))
     }
 
-    fn update(&self, new_entry: Entry<V>) -> Option<V> {
+    fn update(&self, new_entry: &Entry<V>) -> Option<V> {
         let mut data = self.data.write();
         let entry = data.get(&new_entry.key)?;
         if new_entry.conflict != 0 && (new_entry.conflict != entry.conflict) {
@@ -159,7 +165,7 @@ where
         }
         self.em
             .update(new_entry.key, new_entry.conflict, entry.exp, new_entry.exp);
-        let entry = data.insert(new_entry.key, new_entry);
+        let entry = data.insert(new_entry.key, new_entry.clone());
         entry.map(|v| v.value).flatten()
     }
 

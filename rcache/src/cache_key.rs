@@ -72,3 +72,15 @@ impl<T: ?Sized + Hash> CacheKey for &T {
         (default_hasher.finish(), xxhasher.finish())
     }
 }
+
+
+impl<T: ?Sized + Hash> CacheKey for &mut T {
+    #[inline]
+    fn key_to_hash(&self) -> (u64, u64) {
+        let mut default_hasher = DefaultHasher::new();
+        self.hash(&mut default_hasher);
+        let mut xxhasher = Xxh3::new();
+        self.hash(&mut xxhasher);
+        (default_hasher.finish(), xxhasher.finish())
+    }
+}

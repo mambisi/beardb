@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ops::BitXor;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
@@ -6,9 +7,9 @@ use std::thread::JoinHandle;
 
 use parking_lot::Mutex;
 
+use crate::{Metrics, MetricType, ring};
 use crate::bloom::Bloom;
 use crate::cm_sketch::CMSketch;
-use crate::ring;
 
 const LFU_SAMPLE: usize = 5;
 
@@ -74,15 +75,19 @@ pub(crate) struct DefaultPolicy {
     is_closed: Arc<AtomicBool>,
     processor: JoinHandle<()>,
     max_cost: Arc<AtomicI64>,
+    metrics: Option<Metrics>
 }
 
 impl DefaultPolicy {
     pub(crate) fn new(num_counters: u64, max_cost: i64) -> Self {
+        Self::new_with_metrics(num_counters, max_cost, None)
+    }
+    pub(crate) fn new_with_metrics(num_counters: u64, max_cost: i64, metrics: Option<Metrics>) -> Self {
         let is_closed = Arc::new(AtomicBool::new(false));
         let max_cost = Arc::new(AtomicI64::new(max_cost));
         let inner = Arc::new(Mutex::new(Inner {
             admit: TinyLFU::new(num_counters),
-            evict: SampledLFU::new(max_cost.clone()),
+            evict: SampledLFU::new(max_cost.clone(), metrics.clone()),
         }));
         let (items_channel, receiver) = std::sync::mpsc::sync_channel(3);
         let processor = process_op(is_closed.clone(), receiver, inner.clone());
@@ -92,6 +97,7 @@ impl DefaultPolicy {
             is_closed,
             processor,
             max_cost,
+            metrics
         }
     }
     pub(crate) fn close(&self) {
@@ -109,7 +115,18 @@ impl ring::Consumer for DefaultPolicy {
         if keys.is_empty() {
             return true;
         }
-        self.items_channel.send(keys).is_ok()
+        let key = keys[0];
+        let keys_len = keys.len() as u64;
+        if self.items_channel.send(keys).is_ok() {
+            if let Some(metrics) = self.metrics.as_ref() {
+                metrics.add(MetricType::KeepGets, key, keys_len);
+            }
+            return true
+        }
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.add(MetricType::DropGets, key, keys_len);
+        }
+        return false
     }
 }
 
@@ -137,6 +154,9 @@ impl Policy for DefaultPolicy {
             // There's enough room in the cache to store the new item without
             // overflowing. Do that now and stop here.
             p.evict.add(key, cost);
+            if let Some(metrics) = self.metrics.as_ref() {
+                metrics.add(MetricType::CostAdd, key, cost as u64);
+            }
             return (None, true);
         }
 
@@ -164,6 +184,9 @@ impl Policy for DefaultPolicy {
 
             // If the incoming item isn't worth keeping in the policy, reject.
             if inc_hits < min_hits {
+                if let Some(metrics) = self.metrics.as_ref() {
+                    metrics.add(MetricType::RejectSets, key, 1);
+                }
                 return (Some(victims), false);
             }
 
@@ -185,6 +208,9 @@ impl Policy for DefaultPolicy {
         }
         // Add Key and Cost to sample
         p.evict.add(key, cost);
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.add(MetricType::CostAdd, key, cost as u64);
+        }
         return (Some(victims), true);
     }
 
@@ -248,14 +274,16 @@ pub(crate) struct SampledLFU {
     max_cost: Arc<AtomicI64>,
     used: i64,
     key_costs: HashMap<u64, i64>,
+    metrics: Option<Metrics>,
 }
 
 impl SampledLFU {
-    pub(crate) fn new(max_cost: Arc<AtomicI64>) -> Self {
+    pub(crate) fn new(max_cost: Arc<AtomicI64>, metrics: Option<Metrics>) -> Self {
         Self {
             max_cost,
             used: 0,
             key_costs: Default::default(),
+            metrics,
         }
     }
     pub(crate) fn max_cost(&self) -> i64 {
@@ -279,9 +307,14 @@ impl SampledLFU {
     }
 
     pub(crate) fn remove(&mut self, key: &u64) -> Option<i64> {
-        let cost = self.key_costs.get(key)?;
+        let cost = *self.key_costs.get(key)?;
         self.used -= cost;
-        self.key_costs.remove(key)
+        let out = self.key_costs.remove(key);
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.add(MetricType::CostEvict, *key, cost as u64);
+            metrics.add(MetricType::KeyEvict, *key, 1);
+        }
+        out
     }
 
     pub(crate) fn add(&mut self, key: u64, cost: i64) {
@@ -291,6 +324,11 @@ impl SampledLFU {
 
     pub(crate) fn update_if_has(&mut self, key: u64, cost: i64) -> bool {
         if let Some(prev) = self.key_costs.get_mut(&key) {
+            if let Some(metrics) = self.metrics.as_ref() {
+                let diff = *prev - cost;
+                metrics.add(MetricType::CostAdd, key, diff as u64)
+            }
+
             self.used += cost - *prev;
             *prev = cost;
             return true;

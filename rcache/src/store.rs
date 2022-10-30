@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use crate::{Entry, ItemCallBackFn};
+use crate::{Broadcast, Entry, ItemCallBackFn};
 use crate::policy::Policy;
 
 pub(crate) trait Store<V>
@@ -12,7 +12,7 @@ pub(crate) trait Store<V>
     fn set(&self, entry: Entry<V>);
     fn expiration(&self, key: u64) -> SystemTime;
     fn remove(&self, key: u64, conflict: u64) -> Option<(u64, V)>;
-    fn update(&self, entry: Entry<V>) -> Option<V>;
-    fn cleanup(&self, policy: Arc<dyn Policy>);
+    fn update(&self, entry: &Entry<V>) -> Option<V>;
+    fn cleanup(&self, policy: Arc<dyn Policy>, broadcast: &Broadcast<V>);
     fn clear(&self, callback: ItemCallBackFn<V>);
 }

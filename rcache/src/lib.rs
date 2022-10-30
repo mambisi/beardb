@@ -1,18 +1,14 @@
-use std::borrow::{Borrow, BorrowMut};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::ops::{Add, Div};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, SyncSender};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime};
+use std::sync::mpsc::{Receiver, SyncSender};
+use std::time::{Duration, SystemTime};
 
 use crossbeam::channel::tick;
-use parking_lot::RwLock;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::cache_key::CacheKey;
@@ -38,9 +34,6 @@ mod ttl;
 mod utils;
 
 pub type Result<T> = std::result::Result<T, Error>;
-
-// TODO: make it configurable
-const SET_BUF_SIZE: usize = 32 * 1024;
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub(crate) enum EntryFlag {
@@ -153,7 +146,7 @@ struct InnerCache<V: Clone> {
 struct Cache<K, V: Clone> {
     inner: InnerCache<V>,
     set_buf: SyncSender<Entry<V>>,
-    get_buf: Arc<RingBuffer>,
+    get_buf: RingBuffer,
     closed: Arc<AtomicBool>,
     hasher: DefaultTwoHasher<K>,
     cost: Arc<dyn Cost<V>>,
@@ -196,12 +189,12 @@ impl<K, V> Cache<K, V>
             config.max_cost,
             metrics.clone(),
         ));
-        let get_buffer = Arc::new(RingBuffer::new(
+        let get_buf = RingBuffer::new(
             policy.clone(),
             config.pool_capacity,
             config.get_buffer_size,
-        ));
-        let (set_buffer, set_buffer_handler) = std::sync::mpsc::sync_channel(config.set_buffer_size);
+        );
+        let (set_buf, set_buffer_handler) = std::sync::mpsc::sync_channel(config.set_buffer_size);
 
         let inner = InnerCache {
             store,
@@ -214,8 +207,8 @@ impl<K, V> Cache<K, V>
 
         Self {
             inner,
-            set_buf: set_buffer,
-            get_buf: get_buffer,
+            set_buf,
+            get_buf,
             closed,
             hasher: DefaultTwoHasher(PhantomData::default()),
             cost: Arc::new(cost),
@@ -305,7 +298,7 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
     set_buffer_handler: Receiver<Entry<V>>,
     cache: InnerCache<V>,
 ) {
-    let ticker = tick(Duration::from_secs(BUCKET_DURATION_SECS as u64).div(2));
+    let ticker = tick(Duration::from_secs(BUCKET_DURATION_SECS.div(2) as u64));
     std::thread::spawn(move || loop {
         let is_closed = close.load(Ordering::Acquire);
         if is_closed {
@@ -324,7 +317,7 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
                         }
                     }
                     if let Some(victims) = victims {
-                        for mut victim in victims {
+                        for victim in victims {
                             let mut entry = PartialEntry {
                                 key: victim.key,
                                 conflict: victim.conflict,

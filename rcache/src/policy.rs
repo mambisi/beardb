@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::ops::BitXor;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};

@@ -33,9 +33,14 @@ impl RingStripe {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct RingBuffer {
     pool: Arc<Pool<RingStripe>>,
 }
+
+unsafe impl Send for RingBuffer {}
+
+unsafe impl Sync for RingBuffer {}
 
 impl RingBuffer {
     pub(crate) fn new(

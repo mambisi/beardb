@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use crate::{Broadcast, Entry, ItemCallBackFn};
+use crate::{Entry, ItemCallBackFn};
 use crate::policy::Policy;
 
 pub(crate) trait Store<V>

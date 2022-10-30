@@ -7,14 +7,14 @@ use std::marker::PhantomData;
 use std::ops::{Add, Div};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender, SyncSender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
-use crossbeam::channel::{Receiver, Sender, tick};
+use crossbeam::channel::tick;
 use parking_lot::RwLock;
 use xxhash_rust::xxh3::Xxh3;
 
-use crate::broadcast::{Broadcast, Event, Subscription};
 use crate::cache_key::CacheKey;
 use crate::error::Error;
 use crate::metrics::{Metrics, MetricType};
@@ -152,7 +152,7 @@ struct InnerCache<V: Clone> {
 
 struct Cache<K, V: Clone> {
     inner: InnerCache<V>,
-    set_buf: Sender<Entry<V>>,
+    set_buf: SyncSender<Entry<V>>,
     get_buf: Arc<RingBuffer>,
     closed: Arc<AtomicBool>,
     hasher: DefaultTwoHasher<K>,
@@ -201,7 +201,7 @@ impl<K, V> Cache<K, V>
             config.pool_capacity,
             config.get_buffer_size,
         ));
-        let (set_buffer, set_buffer_handler) = crossbeam::channel::bounded(config.set_buffer_size);
+        let (set_buffer, set_buffer_handler) = std::sync::mpsc::sync_channel(config.set_buffer_size);
 
         let inner = InnerCache {
             store,
@@ -222,7 +222,7 @@ impl<K, V> Cache<K, V>
         }
     }
 
-    pub fn insert(&self, key: K, value: V) -> bool {
+    pub fn insert(&self, key: K, value: V) -> Result<()> {
         self.insert_with_ttl(key, value, Duration::from_secs(0))
     }
 
@@ -262,7 +262,7 @@ impl<K, V> Cache<K, V>
             .map_err(|e| Error::SendError(Box::new(e)))
     }
 
-    pub fn insert_with_ttl(&self, key: K, value: V, ttl: Duration) -> bool {
+    pub fn insert_with_ttl(&self, key: K, value: V, ttl: Duration) -> Result<()> {
         let (key, conflict) = key.key_to_hash();
         let mut cost = self.cost.cost(&value);
         if !self.inner.config.ignore_internal_cost {
@@ -283,20 +283,20 @@ impl<K, V> Cache<K, V>
             exp,
         };
 
-        if let Some(prev) = self.inner.store.update(&entry) {
+        if self.inner.store.update(&entry).is_some() {
             entry.flag = EntryFlag::Update;
         }
         let flag = entry.flag;
-        if self.set_buf.send(entry).is_err() {
+        let send_results = self.set_buf.send(entry);
+        if send_results.is_err() {
             if flag == EntryFlag::Update {
-                return true;
+                return Ok(());
             }
             if let Some(metrics) = self.inner.metrics.as_ref() {
                 metrics.add(MetricType::DropSets, key, 1);
             }
-            return false;
         }
-        return true;
+        send_results.map_err(|e| Error::SendError(Box::new(e)))
     }
 }
 
@@ -355,7 +355,7 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
 mod test {
     use std::time::Duration;
 
-    use crate::{Cache, Config, Event, ZeroCost};
+    use crate::{Cache, Config, ZeroCost};
 
     fn wait(millis: u64) {
         std::thread::sleep(Duration::from_millis(millis))
@@ -364,12 +364,12 @@ mod test {
     #[test]
     fn basic() {
         let cache = Cache::with_config(Config::default(), ZeroCost);
-        assert!(cache.insert(3, 40));
+        assert!(cache.insert(3, 40).is_ok());
         wait(10);
         let cache = Cache::new();
-        assert!(cache.insert(b"aba", 40));
+        assert!(cache.insert(b"aba", 40).is_ok());
         wait(10);
-        assert!(cache.insert_with_ttl(b"bcd", 90, Duration::from_secs(2)));
+        assert!(cache.insert_with_ttl(b"bcd", 90, Duration::from_secs(2)).is_ok());
         wait(10);
         println!("{:?}", cache.get(b"bcd"));
         wait(5000);

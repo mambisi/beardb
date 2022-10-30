@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use arrayvec::ArrayVec;
 use parking_lot::RwLock;
 
-use crate::{Broadcast, Entry, Event, ItemCallBackFn, PartialEntry};
+use crate::{Entry, ItemCallBackFn};
 use crate::policy::Policy;
 use crate::store::Store;
 use crate::ttl::{clean_bucket, ExpirationMap};

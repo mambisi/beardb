@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use arrayvec::ArrayVec;
 use parking_lot::RwLock;
 
-use crate::{Entry, ItemCallBackFn};
+use crate::{Entry, Handler, PartialEntry};
 use crate::policy::Policy;
 use crate::store::Store;
 use crate::ttl::{clean_bucket, ExpirationMap};
@@ -49,7 +49,7 @@ where
         self.shards[(key % NUM_SHARDS) as usize].expiration(key)
     }
 
-    fn remove(&self, key: u64, conflict: u64) -> Option<(u64, V)> {
+    fn remove(&self, key: u64, conflict: u64) -> (u64, Option<V>) {
         self.shards[(key % NUM_SHARDS) as usize].remove(key, conflict)
     }
 
@@ -57,7 +57,7 @@ where
         self.shards[(entry.key % NUM_SHARDS) as usize].update(&entry)
     }
 
-    fn cleanup(&self, policy: &dyn Policy) {
+    fn cleanup(&self, policy: &dyn Policy, handler: &dyn Handler<V>) {
         let mut buckets = self.em.buckets.write();
         let now = SystemTime::now();
         let bucket_id = clean_bucket(now);
@@ -72,16 +72,21 @@ where
             if self.expiration(key) > now {
                 continue;
             }
-
-            let _ = policy.cost(&key);
+            let cost = policy.cost(&key);
             policy.remove(&key);
-            let _ = self.remove(key, conflict);
+            let (_, value) = self.remove(key, conflict);
+            handler.on_evict(PartialEntry {
+                key,
+                conflict,
+                value,
+                cost,
+            })
         }
     }
 
-    fn clear(&self, callback: ItemCallBackFn<V>) {
+    fn clear(&self, callback: &dyn Handler<V>) {
         for i in 0..NUM_SHARDS {
-            self.shards[i as usize].clear(callback.clone())
+            self.shards[i as usize].clear(callback)
         }
     }
 }
@@ -136,18 +141,25 @@ where
         data.get(&key).map(|data| data.exp).unwrap_or_else(utc_zero)
     }
 
-    fn remove(&self, key: u64, conflict: u64) -> Option<(u64, V)> {
+    fn remove(&self, key: u64, conflict: u64) -> (u64, Option<V>) {
         let mut data = self.data.write();
-        let entry = data.get(&key)?;
+        let entry = if let Some(entry) = data.get(&key) {
+            entry
+        } else {
+            return (0, None)
+        };
         if conflict != 0 && (conflict != entry.conflict) {
-            return None;
+            return (0, None);
         }
         if !is_time_zero(&entry.exp) {
             self.em.remove(key, entry.exp);
         }
-        let entry = data.remove(&key)?;
-        let value = entry.value?;
-        Some((entry.conflict, value))
+        let entry = if let Some(entry) = data.remove(&key) {
+            entry
+        } else {
+            return (0, None)
+        };
+        (entry.conflict, entry.value)
     }
 
     fn update(&self, new_entry: &Entry<V>) -> Option<V> {
@@ -162,12 +174,15 @@ where
         entry.map(|v| v.value).flatten()
     }
 
-    fn clear(&self, callback: ItemCallBackFn<V>) {
+    fn clear(&self, handler: &dyn Handler<V>) {
         let mut data = self.data.write();
-        if let Some(on_evict) = callback.as_ref() {
-            for (_, e) in data.iter() {
-                on_evict(e);
-            }
+        for (_, e) in data.iter() {
+            handler.on_evict(PartialEntry {
+                key: e.key,
+                conflict: e.conflict,
+                value: e.value.clone(),
+                cost: e.cost,
+            });
         }
         data.clear();
     }

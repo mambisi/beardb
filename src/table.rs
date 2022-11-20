@@ -1,14 +1,15 @@
+use core::slice::SlicePattern;
+use std::sync::Arc;
+
+use memmap2::Mmap;
+
+use crate::{codec, Error};
 use crate::block::{Block, BlockIterator};
 use crate::bloom::BloomFilterPolicy;
 use crate::codec::decode_fixed32;
 use crate::constant::BLOCK_ENTRY_HEADER_SIZE;
 use crate::iter::Iter;
-use crate::table_index::{TableIndexReader};
-use crate::{codec, Error};
-use core::slice::SlicePattern;
-use memmap2::Mmap;
-use std::sync::Arc;
-
+use crate::table_index::TableIndexReader;
 
 pub(crate) fn decode_key(data: &[u8]) -> &[u8] {
     //TODO: Handle index errors
@@ -120,25 +121,25 @@ pub(crate) struct Table {
 }
 
 impl Table {
-    fn open(id: u64, file: Mmap, opts: Arc<TableOptions>) -> Self {
+    pub(crate) fn open(id: u64, file: Mmap, opts: Arc<TableOptions>) -> Self {
         Self {
             inner: Arc::new(InnerTable::open(id, file, opts)),
         }
     }
 
-    fn index(&self) -> crate::Result<TableIndexReader> {
+    pub(crate) fn index(&self) -> crate::Result<TableIndexReader> {
         self.inner.index()
     }
 
-    fn get_block(&self, index: usize) -> crate::Result<Option<Block>> {
+    pub(crate) fn get_block(&self, index: usize) -> crate::Result<Option<Block>> {
         self.inner.get_block(index)
     }
 
-    fn get(&self, key: &[u8]) -> crate::Result<Option<&[u8]>> {
+    pub(crate) fn get(&self, key: &[u8]) -> crate::Result<Option<&[u8]>> {
         self.inner.get(key)
     }
 
-    fn iter(&self) -> crate::Result<TableIterator> {
+    pub(crate) fn iter(&self) -> crate::Result<TableIterator> {
         let current = match self.get_block(0) {
             Ok(Some(c)) => Box::new(c.into_iter()),
             _ => return Err(Error::InvalidIterator),
@@ -236,13 +237,15 @@ impl Iter for TableIterator {
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
+    use memmap2::Mmap;
+    use tempfile::tempfile;
+
     use crate::bloom::BloomFilterPolicy;
     use crate::iter::Iter;
     use crate::table::{InnerTable, Table, TableOptions};
     use crate::table_builder::TableBuilder;
-    use memmap2::{Mmap};
-    use std::sync::Arc;
-    use tempfile::tempfile;
 
     fn table_opts() -> Arc<TableOptions> {
         Arc::new(TableOptions {

@@ -1,6 +1,7 @@
-use crate::Error;
 use std::hash::Hasher;
 use std::io::{BufReader, Read, Write};
+
+use crate::Error;
 
 const BLOCK_SIZE: usize = 32 * 1024;
 const HEADER_SIZE: usize = 4 + 2 + 1;
@@ -21,7 +22,7 @@ pub struct LogWriter<W: Write> {
 }
 
 impl<W: Write> LogWriter<W> {
-    pub fn new(writer: W) -> LogWriter<W> {
+    pub(crate) fn new(writer: W) -> LogWriter<W> {
         let digest = crc32fast::Hasher::new_with_initial(0xffffffff);
         LogWriter {
             dst: writer,
@@ -33,13 +34,13 @@ impl<W: Write> LogWriter<W> {
 
     /// new_with_off opens a writer starting at some offset of an existing log file. The file must
     /// have the default block size.
-    pub fn new_with_off(writer: W, off: usize) -> LogWriter<W> {
+    pub(crate) fn new_with_off(writer: W, off: usize) -> LogWriter<W> {
         let mut w = LogWriter::new(writer);
         w.current_block_offset = off % BLOCK_SIZE;
         w
     }
 
-    pub fn add_record(&mut self, r: &[u8]) -> crate::Result<usize> {
+    pub(crate) fn add_record(&mut self, r: &[u8]) -> crate::Result<usize> {
         let mut record = &r[..];
         let mut first_frag = true;
         let mut result = Ok(0);
@@ -101,13 +102,14 @@ impl<W: Write> LogWriter<W> {
         Ok(s)
     }
 
-    pub fn flush(&mut self) -> crate::Result<()> {
+    pub(crate) fn flush(&mut self) -> crate::Result<()> {
         self.dst.flush()?;
         Ok(())
     }
+
 }
 
-pub struct LogReader<R: Read> {
+pub(crate) struct LogReader<R: Read> {
     src: BufReader<R>,
     digest: crc32fast::Hasher,
     blk_off: usize,
@@ -117,7 +119,7 @@ pub struct LogReader<R: Read> {
 }
 
 impl<R: Read> LogReader<R> {
-    pub fn new(src: R, chksum: bool) -> LogReader<R> {
+    pub(crate) fn new(src: R, chksum: bool) -> LogReader<R> {
         LogReader {
             src: BufReader::new(src),
             blk_off: 0,
@@ -129,7 +131,7 @@ impl<R: Read> LogReader<R> {
     }
 
     /// EOF is signalled by Ok(0)
-    pub fn read(&mut self, dst: &mut Vec<u8>) -> Result<usize, Error> {
+    pub(crate) fn read(&mut self, dst: &mut Vec<u8>) -> Result<usize, Error> {
         let mut checksum: u32;
         let mut length: u16;
         let mut typ: u8;
@@ -182,7 +184,7 @@ impl<R: Read> LogReader<R> {
         }
     }
 
-    fn check_integrity(&mut self, typ: u8, data: &[u8], expected: u32) -> bool {
+    pub(crate) fn check_integrity(&mut self, typ: u8, data: &[u8], expected: u32) -> bool {
         self.digest.reset();
         let mut digest = self.digest.clone();
         digest.write(&[typ]);
@@ -193,20 +195,21 @@ impl<R: Read> LogReader<R> {
 
 const MASK_DELTA: u32 = 0xa282ead8;
 
-pub fn mask_crc(c: u32) -> u32 {
+pub(crate) fn mask_crc(c: u32) -> u32 {
     (c.wrapping_shr(15) | c.wrapping_shl(17)).wrapping_add(MASK_DELTA)
 }
 
-pub fn unmask_crc(mc: u32) -> u32 {
+pub(crate) fn unmask_crc(mc: u32) -> u32 {
     let rot = mc.wrapping_sub(MASK_DELTA);
     rot.wrapping_shr(17) | rot.wrapping_shl(15)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::log::{mask_crc, unmask_crc, LogReader, LogWriter};
-    use crate::Error;
     use std::io::Cursor;
+
+    use crate::Error;
+    use crate::log::{LogReader, LogWriter, mask_crc, unmask_crc};
 
     #[test]
     fn test_crc_mask_crc() {

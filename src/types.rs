@@ -1,22 +1,39 @@
-use crate::codec::Codec;
-use crate::{ensure, Error};
 use std::io::Read;
 use std::mem::size_of;
 
-pub type CacheKey = [u8; 16];
-pub type CacheID = u64;
+use crate::{ensure, Error};
+use crate::codec::Codec;
+
+pub(crate) type CacheKey = [u8; 16];
+pub(crate) type CacheID = u64;
+
+pub(crate) fn make_cache_key(r: CacheID) -> CacheKey {
+    let mut c = [0_u8; 16];
+    &c[0..8].copy_from_slice(&r.to_le_bytes());
+    c
+}
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub enum ValueType {
+pub(crate) enum ValueType {
     Deletion = 0,
     Value = 1,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct MemEntry<'a> {
+pub(crate) struct MemEntry<'a> {
     tag: u64,
     key: &'a [u8],
     value: &'a [u8],
+}
+
+pub(crate) fn value_type_seq(tag: u64) -> (ValueType, u64) {
+    let typ = tag & 0xff;
+    let t = match typ {
+        0 => ValueType::Deletion,
+        1 => ValueType::Value,
+        _ => ValueType::Value,
+    };
+    (t, tag >> 8)
 }
 
 impl<'a> MemEntry<'a> {

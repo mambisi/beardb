@@ -9,13 +9,14 @@ use std::ops::{Add, Div};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam::channel::tick;
 use parking_lot::RwLock;
 use xxhash_rust::xxh3::Xxh3;
 
-use crate::cache_key::CacheKey;
+use crate::cache_key::HashableKey;
 use crate::error::Error;
 use crate::metrics::{Metrics, MetricType};
 use crate::policy::{DefaultPolicy, Policy};
@@ -24,9 +25,8 @@ use crate::sharded_map::ShardedMap;
 use crate::store::Store;
 use crate::ttl::BUCKET_DURATION_SECS;
 
-mod bloom;
+pub mod bloom;
 mod cache_key;
-mod cm_sketch;
 mod error;
 mod metrics;
 mod policy;
@@ -46,9 +46,9 @@ pub(crate) enum EntryFlag {
     Update,
 }
 
-pub(crate) trait Cost<V>
-where
-    V: Clone,
+pub trait Cost<V>: Send + Sync
+    where
+        V: Clone,
 {
     fn cost(&self, v: &V) -> i64;
 }
@@ -88,21 +88,6 @@ pub trait Handler<V: Clone>: Send + Sync {
     fn on_evict(&self, entry: PartialEntry<V>);
     fn on_reject(&self, entry: PartialEntry<V>);
     fn on_exit(&self, entry: V);
-}
-
-struct DefaultTwoHasher<K>(PhantomData<K>);
-
-impl<K> TwoHash64<K> for DefaultTwoHasher<K>
-where
-    K: Hash,
-{
-    fn hash(&self, key: &K) -> (u64, u64) {
-        let mut default_hasher = DefaultHasher::new();
-        key.hash(&mut default_hasher);
-        let mut xxhasher = Xxh3::new();
-        key.hash(&mut xxhasher);
-        (default_hasher.finish(), xxhasher.finish())
-    }
 }
 
 struct ZeroCost;
@@ -185,13 +170,14 @@ impl<V: Send + Sync + Clone> Handler<V> for InnerCache<V> {
     }
 }
 
-struct Cache<K, V: Clone> {
+pub struct Cache<K, V: Clone> {
     inner: InnerCache<V>,
     set_buf: SyncSender<Entry<V>>,
     get_buf: RingBuffer,
     closed: Arc<AtomicBool>,
-    hasher: DefaultTwoHasher<K>,
     cost: Arc<dyn Cost<V>>,
+    process_thread_handle: JoinHandle<()>,
+    marker_: PhantomData<K>,
 }
 
 impl<K, V: Clone> Drop for Cache<K, V> {
@@ -206,7 +192,7 @@ unsafe impl<K, V: Send + Sync + Clone> Sync for Cache<K, V> {}
 
 impl<K, V> Cache<K, V>
     where
-        K: CacheKey,
+        K: HashableKey,
         V: Clone + Debug + Send + Sync + Default + 'static,
 {
     pub fn new() -> Cache<K, V> {
@@ -237,20 +223,25 @@ impl<K, V> Cache<K, V>
             metrics,
         };
 
-        process_items(closed.clone(), set_buffer_handler, inner.clone());
+        let handle = process_items(closed.clone(), set_buffer_handler, inner.clone());
 
         Self {
             inner,
             set_buf,
             get_buf,
             closed,
-            hasher: DefaultTwoHasher(PhantomData::default()),
             cost: Arc::new(cost),
+            process_thread_handle: handle,
+            marker_: Default::default(),
         }
     }
 
     pub fn insert(&self, key: K, value: V) -> Result<()> {
         self.insert_with_ttl(key, value, Duration::from_secs(0))
+    }
+
+    pub fn insert_with_ttl(&self, key: K, value: V, ttl: Duration) -> Result<()> {
+        self.insert_full(key, value, 0, ttl)
     }
 
     pub fn get(&self, key: K) -> Option<V> {
@@ -269,11 +260,16 @@ impl<K, V> Cache<K, V>
         }
         value
     }
+    fn check(&self) -> Result<()> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(Error::CacheClosed);
+        } else {
+            Ok(())
+        }
+    }
 
     pub fn remove(&self, key: K) -> Result<()> {
-        if self.closed.load(Ordering::Acquire) {
-            return Ok(());
-        }
+        self.check()?;
         let (key, conflict) = key.key_to_hash();
         self.get_buf.push(key);
         let _ = self.inner.store.remove(key, conflict);
@@ -289,9 +285,14 @@ impl<K, V> Cache<K, V>
             .map_err(|e| Error::SendError(Box::new(e)))
     }
 
-    pub fn insert_with_ttl(&self, key: K, value: V, ttl: Duration) -> Result<()> {
+    pub fn insert_full(&self, key: K, value: V, cost: i64, ttl: Duration) -> Result<()> {
+        self.check()?;
         let (key, conflict) = key.key_to_hash();
-        let mut cost = self.cost.cost(&value);
+        let mut cost = if cost <= 0 {
+            self.cost.cost(&value)
+        } else {
+            cost
+        };
         if !self.inner.config.ignore_internal_cost {
             cost += std::mem::size_of::<Entry<V>>() as i64;
         }
@@ -324,6 +325,26 @@ impl<K, V> Cache<K, V>
             }
         }
         send_results.map_err(|e| Error::SendError(Box::new(e)))
+    }
+    pub fn update_cost(&self, key: &K, cost: i64) -> Result<()> {
+        self.check()?;
+        let (key, conflict) = key.key_to_hash();
+        let _ = self
+            .inner
+            .store
+            .get(key, conflict)
+            .ok_or(Error::KeyDoesntExist)?;
+        let entry = Entry {
+            flag: EntryFlag::Update,
+            key,
+            conflict,
+            value: None,
+            cost,
+            exp: SystemTime::UNIX_EPOCH,
+        };
+        self.set_buf
+            .send(entry)
+            .map_err(|e| Error::SendError(Box::new(e)))
     }
     pub fn metrics(&self) -> Option<&Metrics> {
         self.inner.metrics.as_ref()
@@ -372,7 +393,7 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
     close: Arc<AtomicBool>,
     set_buffer_handler: Receiver<Entry<V>>,
     cache: InnerCache<V>,
-) {
+) -> JoinHandle<()> {
     let ticker = tick(Duration::from_secs(BUCKET_DURATION_SECS.div(2) as u64));
     let handler = ProcessItemsHandler {
         start_tx: Arc::new(Default::default()),
@@ -385,7 +406,6 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
         if is_closed {
             break;
         }
-
         if let Ok(entry) = set_buffer_handler.try_recv() {
             match entry.flag {
                 EntryFlag::New => {
@@ -429,57 +449,6 @@ fn process_items<V: Clone + Debug + Send + Sync + 'static>(
             last_tick = tick;
             cache.store.cleanup(cache.policy.as_ref(), &handler);
         }
-    });
+    })
 }
 
-#[cfg(test)]
-mod test {
-    use std::default::default;
-    use std::fmt::Debug;
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    use crate::{Cache, Config, Handler, PartialEntry, ZeroCost};
-
-    fn wait(millis: u64) {
-        std::thread::sleep(Duration::from_millis(millis))
-    }
-
-    struct ItemsHandler;
-
-    impl<V: Clone + Send + Sync + Debug> Handler<V> for ItemsHandler {
-        fn on_evict(&self, entry: PartialEntry<V>) {
-            println!("ItemsHandler on_evict {:?}", entry)
-        }
-
-        fn on_reject(&self, entry: PartialEntry<V>) {
-            println!("ItemsHandler on_reject {:?}", entry)
-        }
-
-        fn on_exit(&self, entry: V) {
-            println!("ItemsHandler on_exit {:?}", entry)
-        }
-    }
-
-    #[test]
-    fn basic() {
-        let cache = Cache::with_config(
-            Config {
-                handler: Some(Box::new(ItemsHandler)),
-                ..default()
-            },
-            ZeroCost,
-        );
-        assert!(cache.insert(b"aba", 40).is_ok());
-        wait(10);
-        assert!(cache
-            .insert_with_ttl(b"bcd", 90, Duration::from_secs(2))
-            .is_ok());
-        wait(10);
-        println!("{:?}", cache.get(b"bcd"));
-        wait(5000);
-        println!("{:?}", cache.get(b"bcd"));
-        wait(2000);
-        println!("{}", cache.metrics().unwrap());
-    }
-}

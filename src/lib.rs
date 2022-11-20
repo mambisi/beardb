@@ -2,6 +2,10 @@
 #![feature(generic_associated_types)]
 #![feature(map_first_last)]
 #![feature(default_free_fn)]
+#![feature(build_hasher_simple_hash_one)]
+#![feature(let_else)]
+
+extern crate core;
 extern crate core;
 
 use crate::error::Error;
@@ -13,9 +17,7 @@ mod codec;
 mod constant;
 mod error;
 mod iter;
-mod lfu_cache;
 mod log;
-mod lru_cache;
 mod memtable;
 mod memtable_cache;
 mod metadata;
@@ -24,6 +26,9 @@ mod table;
 mod table_builder;
 mod table_index;
 mod types;
+mod env;
+mod disk_env;
+mod chunk;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

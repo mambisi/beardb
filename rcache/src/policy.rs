@@ -6,9 +6,10 @@ use std::thread::JoinHandle;
 
 use parking_lot::Mutex;
 
+use common::cm_sketch::CMSketch;
+
 use crate::{Metrics, MetricType, ring};
 use crate::bloom::Bloom;
-use crate::cm_sketch::CMSketch;
 
 const LFU_SAMPLE: usize = 5;
 
@@ -297,11 +298,8 @@ impl SampledLFU {
         if input.len() >= LFU_SAMPLE {
             return;
         }
-        for (key, cost) in &self.key_costs {
+        for (key, cost) in self.key_costs.iter().take(LFU_SAMPLE) {
             input.push(PolicyPair(*key, *cost));
-            if input.len() >= LFU_SAMPLE {
-                return;
-            }
         }
     }
 
@@ -373,7 +371,6 @@ impl TinyLFU {
 
     pub(crate) fn increment(&mut self, key: u64) {
         if self.door.check_and_set(key) {
-            println!("Increment {}", key);
             self.freq.increment(key)
         }
         self.incrs += 1;

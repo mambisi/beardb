@@ -1,9 +1,10 @@
-use crate::cmp::Comparator;
+use std::cmp::Ordering;
+use std::sync::Arc;
+
+use crate::cmp::{Comparator, DefaultComparator};
 use crate::codec::Codec;
 use crate::skiplist::SkipList;
 use crate::types::{MemEntry, ValueType};
-use std::cmp::Ordering;
-use std::sync::Arc;
 
 pub(crate) struct MemTable {
     cmp: Arc<Box<dyn Comparator>>,
@@ -11,6 +12,13 @@ pub(crate) struct MemTable {
 }
 
 impl MemTable {
+    pub(crate) fn new() -> Self {
+        let cmp = Arc::new(Box::new(DefaultComparator));
+        Self {
+            cmp: cmp.clone(),
+            table: SkipList::new(cmp),
+        }
+    }
     pub(crate) fn add(
         &self,
         seq: u64,
@@ -20,6 +28,13 @@ impl MemTable {
     ) -> crate::Result<()> {
         let entry = MemEntry::new(seq, vtype, key, value).encode()?;
         self.table.insert(&entry)
+    }
+
+    pub(crate) fn add_raw(
+        &self,
+        raw_entry: &[u8],
+    ) -> crate::Result<()> {
+        self.table.insert(raw_entry)
     }
 
     pub(crate) fn get(&self, key: &[u8]) -> crate::Result<Option<&[u8]>> {
